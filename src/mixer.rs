@@ -5,8 +5,9 @@ use crate::constants::SAMPLE_RATE;
 
 const TARGET_CHUNK_SIZE: usize = 128;
 
-pub type MixerInput = mpsc::Receiver<(i16, i16)>;
-pub type MixerOutput = watch::Receiver<Vec<(i16, i16)>>;
+pub type Sample = (i16, i16);
+pub type MixerInput = mpsc::Receiver<Sample>;
+pub type MixerOutput = watch::Receiver<Vec<Sample>>;
 
 pub fn start(mut sources: Vec<MixerInput>) -> Result<MixerOutput> {
     let (tx, rx) = watch::channel(Default::default());
