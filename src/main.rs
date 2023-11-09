@@ -7,8 +7,8 @@ mod sources;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let sine_source1 = sources::sine::start(440.0).await;
-    let sine_source2 = sources::sine::start(640.0).await;
+    let _sine_source1 = sources::sine::start(440.0);
+    let _sine_source2 = sources::sine::start(640.0);
 
     let symphonia_source = sources::symphonia::start("./rickroll.m4a");
 
@@ -16,8 +16,7 @@ async fn main() -> Result<()> {
         symphonia_source,
         // sine_source1,
         // sine_source2
-    ])
-    .await?;
+    ])?;
     net::start(mixer_output).await?;
 
     tokio::signal::ctrl_c().await?;

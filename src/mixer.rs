@@ -8,7 +8,7 @@ const TARGET_CHUNK_SIZE: usize = 128;
 pub type MixerInput = mpsc::Receiver<(i16, i16)>;
 pub type MixerOutput = watch::Receiver<Vec<(i16, i16)>>;
 
-pub async fn start(mut sources: Vec<MixerInput>) -> Result<MixerOutput> {
+pub fn start(mut sources: Vec<MixerInput>) -> Result<MixerOutput> {
     let (tx, rx) = watch::channel(Default::default());
 
     tokio::spawn(async move {
