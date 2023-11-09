@@ -1,5 +1,4 @@
-
-fn symphonia() {
+pub fn symphonia() {
     use std::env;
     use std::fs::File;
     use std::path::Path;

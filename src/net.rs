@@ -6,14 +6,10 @@ use tokio::net::TcpListener;
 // Import the tokio and hound crates
 use hound::{SampleFormat, WavSpec};
 
-use crate::mixer::MixerChannel;
+use crate::constants::{BIT_DEPTH, CHANNELS, SAMPLE_RATE};
+use crate::mixer::MixerOutput;
 
-// Define some constants for the audio parameters
-const SAMPLE_RATE: u32 = 44100; // 44.1 kHz sample rate
-const BIT_DEPTH: u16 = 16; // 16 bits per sample
-const CHANNELS: u16 = 2; // Stereo channel
-
-pub async fn start(mixer_channel: MixerChannel) -> Result<()> {
+pub async fn start(source: MixerOutput) -> Result<()> {
     // Create a TCP listener that binds to the local address 127.0.0.1:7878
     let listener = TcpListener::bind("127.0.0.1:7878").await?;
     println!("Listening on 127.0.0.1:7878");
@@ -24,7 +20,7 @@ pub async fn start(mixer_channel: MixerChannel) -> Result<()> {
         println!("Accepted connection from {}", addr);
 
         // Spawn a new task to handle incoming samples
-        let mut mixer_channel = mixer_channel.clone();
+        let mut source = source.clone();
 
         // Spawn a new task to handle the connection
         tokio::spawn(async move {
@@ -36,24 +32,22 @@ pub async fn start(mixer_channel: MixerChannel) -> Result<()> {
                 sample_format: SampleFormat::Int,
             };
 
-            let v = spec.into_header_for_infinite_file();
-
             // Write the wav header to the stream using the hound crate
-            // This will allow the VLC player to recognize the stream as a wav file
-            if let Err(e) = stream.write_all(&v[..]).await {
+            // This will allow players to recognize the stream as a wav file
+            let header = spec.into_header_for_infinite_file();
+            if let Err(e) = stream.write_all(&header[..]).await {
                 eprintln!("Failed to write wav header: {}", e);
                 return;
             }
 
             // Create a loop to write audio samples to the stream
             loop {
-                mixer_channel
+                source
                     .changed()
                     .await
                     .expect("Expected mixer channel to never close");
 
-                let samples = mixer_channel.borrow_and_update().clone();
-
+                let samples = source.borrow_and_update().clone();
                 let mut wav_data: Vec<u8> = Vec::with_capacity(samples.len() * 2);
 
                 for (left, right) in samples {
