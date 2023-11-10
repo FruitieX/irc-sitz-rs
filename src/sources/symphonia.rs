@@ -29,6 +29,7 @@ pub fn start(file_path: &str) -> MixerInput {
 
     rx
 }
+
 pub async fn play_file(file_path: String, tx: Sender<Sample>) -> Result<()> {
     // Create a media source. Note that the MediaSource trait is automatically implemented for File,
     // among other types.

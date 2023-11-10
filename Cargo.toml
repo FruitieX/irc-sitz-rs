@@ -8,6 +8,8 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.75"
 byteorder = "1.5.0"
+espeakng-sys = { version = "0.2.0", features = ["clang-runtime"] }
 hound = "3.5.1"
+lazy_static = "1.4.0"
 symphonia = { version = "0.5.3", features = ["all-formats", "all-codecs"] }
 tokio = { version = "1.33.0", features = ["full"] }
