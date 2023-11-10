@@ -1,17 +1,46 @@
 #![allow(non_upper_case_globals)]
+use serde::Deserialize;
 use tokio::sync::mpsc;
 
-use crate::mixer::MixerInput;
+use crate::{
+    events::{Event, EventBus},
+    mixer::MixerInput,
+};
 
-pub fn start() -> MixerInput {
+#[derive(Debug, Deserialize, Default, PartialEq)]
+pub enum Priority {
+    #[default]
+    Low,
+    High,
+}
+
+pub enum TextToSpeechAction {
+    Speak { text: String, prio: Priority },
+}
+
+pub fn start(bus: &EventBus) -> MixerInput {
+    let bus = bus.clone();
     let (tx, rx) = mpsc::channel(128);
 
     tokio::spawn(async move {
         let mut pos = 0;
-        let spoken = espeakng_sys_example::speak("Hello, world!");
+        let mut sample_buf: Vec<i16> = Vec::default();
 
         loop {
-            let sample = *spoken.wav.get(pos).unwrap();
+            // First check for any new events on the bus
+            while let Ok(event) = bus.rx.try_recv() {
+                if let Event::TextToSpeech(TextToSpeechAction::Speak { text, prio }) = event {
+                    if prio == Priority::High {
+                        pos = 0;
+                        sample_buf.clear();
+                    }
+
+                    let spoken = espeakng_sys_example::speak(&text);
+                    sample_buf.extend(spoken.wav);
+                }
+            }
+
+            let sample = sample_buf.get(pos).cloned().unwrap_or_default();
 
             // Send the same sample twice to resample from 22050 Hz to to 44100 Hz
             for _ in 0..2 {
@@ -21,7 +50,10 @@ pub fn start() -> MixerInput {
             }
 
             pos += 1;
-            pos %= spoken.wav.len();
+            if pos >= sample_buf.len() {
+                pos = 0;
+                sample_buf.clear();
+            }
         }
     });
 

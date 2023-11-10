@@ -108,10 +108,10 @@ pub async fn play_file(file_path: String, tx: Sender<Sample>) -> Result<()> {
                     // The samples may now be access via the `samples()` function.
                     let samples = buf.samples();
                     sample_count += samples.len() / 2;
-                    println!(
-                        "\rDecoded {:.2} seconds",
-                        sample_count as f64 / SAMPLE_RATE as f64
-                    );
+                    // println!(
+                    //     "\rDecoded {:.2} seconds",
+                    //     sample_count as f64 / SAMPLE_RATE as f64
+                    // );
 
                     for i in 0..samples.len() / 2 {
                         // Write the sample to the buffer
