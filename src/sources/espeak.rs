@@ -1,10 +1,12 @@
 #![allow(non_upper_case_globals)]
+use std::sync::Arc;
+
 use serde::Deserialize;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 
 use crate::{
     events::{Event, EventBus},
-    mixer::MixerInput,
+    mixer::{MixerInput, Sample},
 };
 
 #[derive(Debug, Deserialize, Default, PartialEq)]
@@ -14,33 +16,61 @@ pub enum Priority {
     High,
 }
 
+#[derive(Debug)]
 pub enum TextToSpeechAction {
     Speak { text: String, prio: Priority },
 }
 
-pub fn start(bus: &EventBus) -> MixerInput {
-    let bus = bus.clone();
-    let (tx, rx) = mpsc::channel(128);
+#[derive(Default)]
+struct PlaybackBuffer {
+    position: usize,
+    buffer: Vec<i16>,
+}
 
+impl PlaybackBuffer {
+    pub fn clear(&mut self) {
+        self.position = 0;
+        self.buffer.clear();
+    }
+
+    pub fn next_sample(&mut self) -> Option<i16> {
+        let sample = self.buffer.get(self.position).cloned();
+        self.position += 1;
+        if self.position >= self.buffer.len() {
+            self.position = 0;
+            self.buffer.clear();
+        }
+        sample
+    }
+}
+
+fn start_event_loop(bus: EventBus, playback_buf: Arc<Mutex<PlaybackBuffer>>) {
     tokio::spawn(async move {
-        let mut pos = 0;
-        let mut sample_buf: Vec<i16> = Vec::default();
-
+        // Check for any new events on the bus
         loop {
-            // First check for any new events on the bus
-            while let Ok(event) = bus.rx.try_recv() {
-                if let Event::TextToSpeech(TextToSpeechAction::Speak { text, prio }) = event {
-                    if prio == Priority::High {
-                        pos = 0;
-                        sample_buf.clear();
-                    }
+            let event = bus.rx.recv_async().await.unwrap();
 
-                    let spoken = espeakng_sys_example::speak(&text);
-                    sample_buf.extend(spoken.wav);
+            if let Event::TextToSpeech(TextToSpeechAction::Speak { text, prio }) = event {
+                let spoken = espeakng_sys_example::speak(&text);
+
+                let mut playback_buf = playback_buf.lock().await;
+                if prio == Priority::High {
+                    playback_buf.clear();
                 }
-            }
 
-            let sample = sample_buf.get(pos).cloned().unwrap_or_default();
+                playback_buf.buffer.extend(spoken.wav);
+            }
+        }
+    });
+}
+
+fn start_emit_sample_loop(tx: mpsc::Sender<Sample>, playback_buf: Arc<Mutex<PlaybackBuffer>>) {
+    tokio::spawn(async move {
+        loop {
+            let sample = {
+                let mut playback_buf = playback_buf.lock().await;
+                playback_buf.next_sample().unwrap_or_default()
+            };
 
             // Send the same sample twice to resample from 22050 Hz to to 44100 Hz
             for _ in 0..2 {
@@ -48,14 +78,16 @@ pub fn start(bus: &EventBus) -> MixerInput {
                     .await
                     .expect("Expected mixer channel to never close");
             }
-
-            pos += 1;
-            if pos >= sample_buf.len() {
-                pos = 0;
-                sample_buf.clear();
-            }
         }
     });
+}
+
+pub fn start(bus: &EventBus) -> MixerInput {
+    let (tx, rx) = mpsc::channel(128);
+    let playback_buf = Arc::new(Mutex::new(PlaybackBuffer::default()));
+
+    start_event_loop(bus.clone(), playback_buf.clone());
+    start_emit_sample_loop(tx, playback_buf);
 
     rx
 }
@@ -144,7 +176,10 @@ mod espeakng_sys_example {
         }
 
         let result = AUDIO_RETURN.plock().take();
+
+        unsafe {
             espeak_Terminate();
+        }
 
         Spoken {
             wav: result,
