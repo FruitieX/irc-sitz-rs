@@ -5,7 +5,8 @@ use crate::{
     sources,
 };
 
-pub fn start(bus: EventBus) {
+pub fn start(bus: &EventBus) {
+    let bus = bus.clone();
     tokio::spawn(async move {
         let stdin = tokio::io::stdin();
         let mut reader = tokio::io::BufReader::new(stdin);
@@ -14,39 +15,41 @@ pub fn start(bus: EventBus) {
             let byte = reader.read_u8().await.unwrap();
 
             match byte {
+                b'r' => {
+                    bus.send(bus::Event::Symphonia(
+                        sources::symphonia::SymphoniaAction::PlayFile {
+                            file_path: "rickroll.m4a".to_string(),
+                        },
+                    ))
+                    .unwrap();
+                }
                 b'l' => {
-                    println!("Sending low prio tts event");
-                    bus
-                        .send(bus::Event::TextToSpeech(
-                            sources::espeak::TextToSpeechAction::Speak {
-                                text: "Hello world".to_string(),
-                                prio: sources::espeak::Priority::Low,
-                            },
-                        ))
-                        .unwrap();
+                    bus.send(bus::Event::TextToSpeech(
+                        sources::espeak::TextToSpeechAction::Speak {
+                            text: "Hello world".to_string(),
+                            prio: sources::espeak::Priority::Low,
+                        },
+                    ))
+                    .unwrap();
                 }
                 b'h' => {
-                    println!("Sending high prio tts event");
-                    bus
-                        .send(bus::Event::TextToSpeech(
-                            sources::espeak::TextToSpeechAction::Speak {
-                                text: "High prio".to_string(),
-                                prio: sources::espeak::Priority::High,
-                            },
-                        ))
-                        .unwrap();
+                    bus.send(bus::Event::TextToSpeech(
+                        sources::espeak::TextToSpeechAction::Speak {
+                            text: "High prio".to_string(),
+                            prio: sources::espeak::Priority::High,
+                        },
+                    ))
+                    .unwrap();
                 }
                 b'L' => {
-                    println!("Sending long tts event");
                     let text = "Hello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello world".to_string();
-                    bus
-                        .send(bus::Event::TextToSpeech(
-                            sources::espeak::TextToSpeechAction::Speak {
-                                text,
-                                prio: sources::espeak::Priority::High,
-                            },
-                        ))
-                        .unwrap();
+                    bus.send(bus::Event::TextToSpeech(
+                        sources::espeak::TextToSpeechAction::Speak {
+                            text,
+                            prio: sources::espeak::Priority::High,
+                        },
+                    ))
+                    .unwrap();
                 }
                 // handle ctrl-c
                 b'q' | 3 => {

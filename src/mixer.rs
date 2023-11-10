@@ -65,7 +65,7 @@ pub fn start(bus: &EventBus, mut sources: Vec<MixerInput>) -> Result<MixerOutput
 
                 let mut first_source = true;
                 for source in &mut sources {
-                    let sample = source.recv().await.unwrap();
+                    let sample = source.recv().await.expect("Expected source to never close");
                     let volume = if first_source { 1.0 } else { secondary_volume };
                     left = left.saturating_add((sample.0 as f64 * volume) as i16);
                     right = right.saturating_add((sample.1 as f64 * volume) as i16);

@@ -1,9 +1,11 @@
 use anyhow::Result;
 
-mod constants;
+mod buffer;
 mod bus;
+mod constants;
 mod mixer;
 mod net;
+mod playback;
 mod sources;
 mod stdin;
 
@@ -14,7 +16,7 @@ async fn main() -> Result<()> {
     let _sine_source1 = sources::sine::start(440.0);
     let _sine_source2 = sources::sine::start(640.0);
     let espeak_source = sources::espeak::start(&bus);
-    let symphonia_source = sources::symphonia::start("./rickroll.m4a");
+    let symphonia_source = sources::symphonia::start(&bus);
 
     let mixer_output = mixer::start(
         &bus,
@@ -27,8 +29,8 @@ async fn main() -> Result<()> {
     )?;
 
     net::start(mixer_output);
-
-    stdin::start(bus);
+    stdin::start(&bus);
+    bus::debug(&bus);
 
     tokio::signal::ctrl_c().await?;
 
