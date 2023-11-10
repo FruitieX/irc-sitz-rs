@@ -1,19 +1,23 @@
+use tokio::io::AsyncReadExt;
+
 use crate::{
-    events::{self, EventBus},
+    bus::{self, EventBus},
     sources,
 };
 
 pub fn start(bus: EventBus) {
     tokio::spawn(async move {
-        let stdin = std::io::stdin();
-        let stdin = stdin.lock();
-        let mut bytes = std::io::Read::bytes(stdin);
+        let stdin = tokio::io::stdin();
+        let mut reader = tokio::io::BufReader::new(stdin);
+
         loop {
-            let b = bytes.next().unwrap().unwrap();
-            match b {
+            let byte = reader.read_u8().await.unwrap();
+
+            match byte {
                 b'l' => {
-                    bus.tx
-                        .send(events::Event::TextToSpeech(
+                    println!("Sending low prio tts event");
+                    bus
+                        .send(bus::Event::TextToSpeech(
                             sources::espeak::TextToSpeechAction::Speak {
                                 text: "Hello world".to_string(),
                                 prio: sources::espeak::Priority::Low,
@@ -22,14 +26,32 @@ pub fn start(bus: EventBus) {
                         .unwrap();
                 }
                 b'h' => {
-                    bus.tx
-                        .send(events::Event::TextToSpeech(
+                    println!("Sending high prio tts event");
+                    bus
+                        .send(bus::Event::TextToSpeech(
                             sources::espeak::TextToSpeechAction::Speak {
                                 text: "High prio".to_string(),
                                 prio: sources::espeak::Priority::High,
                             },
                         ))
                         .unwrap();
+                }
+                b'L' => {
+                    println!("Sending long tts event");
+                    let text = "Hello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello world".to_string();
+                    bus
+                        .send(bus::Event::TextToSpeech(
+                            sources::espeak::TextToSpeechAction::Speak {
+                                text,
+                                prio: sources::espeak::Priority::High,
+                            },
+                        ))
+                        .unwrap();
+                }
+                // handle ctrl-c
+                b'q' | 3 => {
+                    println!("Received ctrl-c, exiting");
+                    std::process::exit(0);
                 }
                 _ => {}
             }

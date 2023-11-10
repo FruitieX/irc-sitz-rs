@@ -1,7 +1,4 @@
-use crate::{
-    constants::SAMPLE_RATE,
-    mixer::{MixerInput, Sample},
-};
+use crate::mixer::{MixerInput, Sample};
 use anyhow::{Context, Result};
 use std::fs::File;
 use std::path::Path;
@@ -65,7 +62,7 @@ pub async fn play_file(file_path: String, tx: Sender<Sample>) -> Result<()> {
     // Store the track identifier, we'll use it to filter packets.
     let track_id = track.id;
 
-    let mut sample_count = 0;
+    let mut _sample_count = 0;
     let mut sample_buf = None;
 
     loop {
@@ -107,10 +104,10 @@ pub async fn play_file(file_path: String, tx: Sender<Sample>) -> Result<()> {
 
                     // The samples may now be access via the `samples()` function.
                     let samples = buf.samples();
-                    sample_count += samples.len() / 2;
+                    _sample_count += samples.len() / 2;
                     // println!(
                     //     "\rDecoded {:.2} seconds",
-                    //     sample_count as f64 / SAMPLE_RATE as f64
+                    //     _sample_count as f64 / SAMPLE_RATE as f64
                     // );
 
                     for i in 0..samples.len() / 2 {
