@@ -144,6 +144,7 @@ mod espeakng_sys_example {
         }
 
         let result = AUDIO_RETURN.plock().take();
+            espeak_Terminate();
 
         Spoken {
             wav: result,
