@@ -5,18 +5,18 @@ use serde::Deserialize;
 use tokio::sync::{mpsc, Mutex};
 
 use crate::{
-    events::{Event, EventBus},
-    mixer::{MixerInput, Sample},
+    bus::{Event, EventBus},
+    mixer::{MixerAction, MixerInput, Sample},
 };
 
-#[derive(Debug, Deserialize, Default, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
 pub enum Priority {
     #[default]
     Low,
     High,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum TextToSpeechAction {
     Speak { text: String, prio: Priority },
 }
@@ -47,8 +47,10 @@ impl PlaybackBuffer {
 fn start_event_loop(bus: EventBus, playback_buf: Arc<Mutex<PlaybackBuffer>>) {
     tokio::spawn(async move {
         // Check for any new events on the bus
+        let mut bus = bus.subscribe();
+
         loop {
-            let event = bus.rx.recv_async().await.unwrap();
+            let event = bus.recv().await.unwrap();
 
             if let Event::TextToSpeech(TextToSpeechAction::Speak { text, prio }) = event {
                 let spoken = espeakng_sys_example::speak(&text);
@@ -58,19 +60,55 @@ fn start_event_loop(bus: EventBus, playback_buf: Arc<Mutex<PlaybackBuffer>>) {
                     playback_buf.clear();
                 }
 
-                playback_buf.buffer.extend(spoken.wav);
+                // Add some silence before the sample
+                let mut audio = vec![0; 5000];
+
+                audio.extend(spoken.wav);
+
+                // Add some silence after the sample
+                audio.extend(vec![0; 5000]);
+
+                playback_buf.buffer.extend(audio);
             }
         }
     });
 }
 
-fn start_emit_sample_loop(tx: mpsc::Sender<Sample>, playback_buf: Arc<Mutex<PlaybackBuffer>>) {
+fn start_emit_sample_loop(
+    bus: EventBus,
+    tx: mpsc::Sender<Sample>,
+    playback_buf: Arc<Mutex<PlaybackBuffer>>,
+) {
     tokio::spawn(async move {
+        let mut speaking = false;
+
         loop {
+            let was_speaking = speaking;
+
             let sample = {
                 let mut playback_buf = playback_buf.lock().await;
-                playback_buf.next_sample().unwrap_or_default()
+                let sample = playback_buf.next_sample();
+
+                speaking = sample.is_some();
+
+                sample.unwrap_or_default()
             };
+
+            if speaking != was_speaking {
+                if speaking {
+                    println!("Speaking started");
+                    bus.send(Event::Mixer(MixerAction::SetSecondaryChannelsVolume {
+                        volume: 0.25,
+                    }))
+                    .unwrap();
+                } else {
+                    println!("Speaking ended");
+                    bus.send(Event::Mixer(MixerAction::SetSecondaryChannelsVolume {
+                        volume: 1.0,
+                    }))
+                    .unwrap();
+                }
+            }
 
             // Send the same sample twice to resample from 22050 Hz to to 44100 Hz
             for _ in 0..2 {
@@ -87,7 +125,7 @@ pub fn start(bus: &EventBus) -> MixerInput {
     let playback_buf = Arc::new(Mutex::new(PlaybackBuffer::default()));
 
     start_event_loop(bus.clone(), playback_buf.clone());
-    start_emit_sample_loop(tx, playback_buf);
+    start_emit_sample_loop(bus.clone(), tx, playback_buf);
 
     rx
 }
