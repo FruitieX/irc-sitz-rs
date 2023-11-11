@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
     irc::start(&bus).await?;
     songleader::start(&bus).await;
     net::start(mixer_output);
-    stdin::start(&bus);
+    // stdin::start(&bus);
     bus::debug(&bus);
 
     tokio::signal::ctrl_c().await?;

@@ -19,7 +19,7 @@ use tokio::{
 const SONGLEADER_STATE_FILE: &str = "songleader_state.json";
 const NUM_TEMPO_NICKS: usize = 4;
 const NUM_BINGO_NICKS: usize = 4;
-const ANTI_FLOOD_DELAY: Duration = Duration::from_millis(1000);
+const ANTI_FLOOD_DELAY: Duration = Duration::from_millis(1200);
 const SECOND: Duration = Duration::from_secs(1);
 const TEMPO_DEADLINE_REDUCTION: Duration = Duration::from_secs(60);
 const TEMPO_DEADLINE: Duration = Duration::from_secs(300);
@@ -57,6 +57,9 @@ pub enum SongleaderAction {
     /// Forces bingo
     ForceBingo,
 
+    /// Forces singing
+    ForceSinging,
+
     /// Pauses the songleader
     Pause,
 
@@ -72,7 +75,7 @@ pub enum SongleaderAction {
 
 pub type Song = String;
 
-#[derive(Default, Deserialize, Serialize, PartialEq)]
+#[derive(Default, Debug, Deserialize, Serialize, PartialEq)]
 pub enum Mode {
     /// Songleader is inactive. Effectively pauses the songleader.
     #[default]
@@ -107,7 +110,7 @@ pub enum Mode {
     Singing,
 }
 
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Default, Debug, Deserialize, Serialize)]
 pub struct SongleaderState {
     /// List of songs that the songleader will sing first
     first_songs: VecDeque<Song>,
@@ -194,8 +197,12 @@ pub struct Songleader {
 impl Songleader {
     /// Creates a new [Songleader] struct
     pub async fn create(bus: &EventBus) -> Self {
+        let state = SongleaderState::read_or_default().await;
+
+        println!("Initial state:\n{:#?}", state);
+
         Self {
-            state: SongleaderState::read_or_default().await,
+            state,
             bus: bus.clone(),
         }
     }
@@ -203,6 +210,8 @@ impl Songleader {
     /// Changes the [Mode] of the [SongleaderState] and writes new state to
     /// disk.
     fn set_mode(&mut self, mode: Mode) {
+        println!("Transitioning to mode: {:?}", mode);
+
         self.state.mode = mode;
         self.state.write_state();
     }
@@ -294,8 +303,7 @@ impl Songleader {
         sleep(3 * SECOND).await;
 
         let welcome_text = format!(
-            r#"
-===================================================================
+            r#"===================================================================
 Hi and welcome to this party. I will be your host today.
 {HELP_TEXT}
 Have fun, and don't drown in the shower!
@@ -312,11 +320,11 @@ Have fun, and don't drown in the shower!
         self.irc_say("*sjunger:*");
 
         self.tts_and_irc_say("En liten fågel satt en gång, och sjöng i furuskog.");
-        sleep(3 * SECOND).await;
+        sleep(4 * SECOND).await;
         self.tts_and_irc_say("Han hade sjungit dagen lång, men dock ej sjungit nog.");
-        sleep(3 * SECOND).await;
+        sleep(4 * SECOND).await;
         self.tts_and_irc_say("Vad sjöng den lilla fågeln då? JO!");
-        sleep(2 * SECOND).await;
+        sleep(3 * SECOND).await;
 
         self.irc_say("Helan går...");
         self.tts_say("Helan går");
@@ -472,6 +480,7 @@ fn handle_incoming_event_loop(bus: EventBus, songleader: Arc<RwLock<Songleader>>
                     }
                     SongleaderAction::ForceTempo => songleader.enter_tempo_mode(),
                     SongleaderAction::ForceBingo => songleader.enter_bingo_mode(),
+                    SongleaderAction::ForceSinging => songleader.enter_singing_mode().await,
                     SongleaderAction::Pause => songleader.enter_inactive_mode(),
                     SongleaderAction::End => songleader.end(),
                     SongleaderAction::Begin => songleader.begin().await,

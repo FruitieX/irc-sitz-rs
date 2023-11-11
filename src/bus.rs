@@ -20,7 +20,7 @@ pub enum Event {
 }
 
 pub fn start() -> EventBus {
-    let (tx, _rx) = broadcast::channel::<Event>(10);
+    let (tx, _rx) = broadcast::channel::<Event>(100);
     tx
 }
 
