@@ -4,6 +4,7 @@ use crate::{
     playback::PlaybackAction,
     sources::espeak::{Priority, TextToSpeechAction},
 };
+use anyhow::{anyhow, Result};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -165,6 +166,19 @@ impl SongleaderState {
         songs.extend(self.backup.clone());
 
         songs
+    }
+
+    fn add_request(&mut self, song: &Song) -> Result<()> {
+        let songs = self.get_songs();
+
+        if songs.contains(song) {
+            return Err(anyhow!("Song already requested"));
+        }
+
+        self.requests.push(song.clone());
+        self.write_state();
+
+        Ok(())
     }
 
     pub fn pop_next_song(&mut self) -> Option<Song> {
@@ -445,7 +459,11 @@ fn handle_incoming_event_loop(bus: EventBus, songleader: Arc<RwLock<Songleader>>
             if let Event::Songleader(action) = event {
                 match action {
                     SongleaderAction::RequestSong { song } => {
-                        songleader.state.requests.push(song);
+                        let result = songleader.state.add_request(&song);
+                        match result {
+                            Ok(_) => songleader.irc_say(&format!("Added {song} to requests")),
+                            Err(e) => songleader.irc_say(&format!("Error: {:?}", e)),
+                        }
                     }
 
                     SongleaderAction::Tempo { nick } => {
