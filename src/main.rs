@@ -3,6 +3,7 @@ use anyhow::Result;
 mod buffer;
 mod bus;
 mod constants;
+mod irc;
 mod mixer;
 mod net;
 mod playback;
@@ -28,6 +29,7 @@ async fn main() -> Result<()> {
         ],
     )?;
 
+    irc::start(&bus).await?;
     net::start(mixer_output);
     stdin::start(&bus);
     bus::debug(&bus);
