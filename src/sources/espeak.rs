@@ -20,6 +20,8 @@ pub enum Priority {
 #[derive(Clone, Debug)]
 pub enum TextToSpeechAction {
     Speak { text: String, prio: Priority },
+    AllowLowPrio,
+    DisallowLowPrio
 }
 
 pub fn start(bus: &EventBus) -> MixerInput {

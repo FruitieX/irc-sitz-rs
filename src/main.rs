@@ -7,6 +7,7 @@ mod irc;
 mod mixer;
 mod net;
 mod playback;
+mod songleader;
 mod sources;
 mod stdin;
 
@@ -30,6 +31,7 @@ async fn main() -> Result<()> {
     )?;
 
     irc::start(&bus).await?;
+    songleader::start(&bus).await;
     net::start(mixer_output);
     stdin::start(&bus);
     bus::debug(&bus);

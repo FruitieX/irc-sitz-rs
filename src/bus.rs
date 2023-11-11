@@ -1,5 +1,6 @@
 use crate::irc::IrcAction;
 use crate::playback::PlaybackAction;
+use crate::songleader::SongleaderAction;
 use crate::{
     mixer::MixerAction,
     sources::{espeak::TextToSpeechAction, symphonia::SymphoniaAction},
@@ -14,7 +15,8 @@ pub enum Event {
     Mixer(MixerAction),
     Symphonia(SymphoniaAction),
     Playback(PlaybackAction),
-    Irc(IrcAction)
+    Irc(IrcAction),
+    Songleader(SongleaderAction),
 }
 
 pub fn start() -> EventBus {

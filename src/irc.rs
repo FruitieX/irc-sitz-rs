@@ -1,6 +1,7 @@
 use crate::{
     bus::{Event, EventBus},
     playback::{PlaybackAction, Song},
+    songleader::SongleaderAction,
     sources::espeak::{Priority, TextToSpeechAction},
 };
 use anyhow::{Context, Result};
@@ -75,9 +76,12 @@ pub async fn start(bus: &EventBus) -> Result<()> {
 
 fn message_to_action(message: &Message) -> Option<Event> {
     if let Command::PRIVMSG(_channel, text) = &message.command {
-        let nick = message.source_nickname()?;
+        let nick = message.source_nickname()?.to_string();
 
+        // Create an iterator over the words in the message
         let mut cmd_split = text.split_whitespace();
+
+        // Advance the iterator by one to get the first word as the command
         let cmd = cmd_split.next()?;
 
         match cmd {
@@ -93,7 +97,7 @@ fn message_to_action(message: &Message) -> Option<Event> {
                 let song = Song {
                     video_id: video_id.to_string(),
                     url: url.to_string(),
-                    queued_by: nick.to_string(),
+                    queued_by: nick,
                 };
 
                 Some(Event::Playback(PlaybackAction::Enqueue { song }))
@@ -107,6 +111,44 @@ fn message_to_action(message: &Message) -> Option<Event> {
                     text,
                     prio: Priority::Low,
                 }))
+            }
+            "!request" => {
+                let words: Vec<&str> = cmd_split.collect();
+                let song = words.join(" ");
+
+                Some(Event::Songleader(SongleaderAction::RequestSong { song }))
+            }
+            "!tempo" => Some(Event::Songleader(SongleaderAction::Tempo { nick })),
+            "!bingo" => Some(Event::Songleader(SongleaderAction::Bingo { nick })),
+            "!skål" => Some(Event::Songleader(SongleaderAction::Skål)),
+            "!ls" => Some(Event::Songleader(SongleaderAction::ListSongs)),
+            "!help" => Some(Event::Songleader(SongleaderAction::Help)),
+
+            // "Admin" commands for songleader
+            "!song" => {
+                let subcommand = cmd_split.next()?;
+
+                match subcommand {
+                    "tempo" => Some(Event::Songleader(SongleaderAction::ForceTempo)),
+                    "bingo" => Some(Event::Songleader(SongleaderAction::ForceBingo)),
+                    "pause" => Some(Event::Songleader(SongleaderAction::Pause)),
+                    "end" => Some(Event::Songleader(SongleaderAction::End)),
+                    "begin" => Some(Event::Songleader(SongleaderAction::Begin)),
+                    _ => None,
+                }
+            }
+
+            // "Admin" commands for music playback
+            "!music" => {
+                let subcommand = cmd_split.next()?;
+
+                match subcommand {
+                    "next" => Some(Event::Playback(PlaybackAction::Next)),
+                    "prev" => Some(Event::Playback(PlaybackAction::Prev)),
+                    "play" => Some(Event::Playback(PlaybackAction::Play)),
+                    "pause" => Some(Event::Playback(PlaybackAction::Pause)),
+                    _ => None,
+                }
             }
             _ => None,
         }
