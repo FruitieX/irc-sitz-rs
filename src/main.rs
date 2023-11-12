@@ -1,4 +1,5 @@
-use anyhow::Result;
+#[macro_use]
+extern crate log;
 
 mod buffer;
 mod bus;
@@ -12,7 +13,9 @@ mod sources;
 mod stdin;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
+    pretty_env_logger::init();
+
     let bus = bus::init();
 
     let _sine_source1 = sources::sine::init(440.0);
@@ -34,9 +37,9 @@ async fn main() -> Result<()> {
     irc::init(&bus).await?;
     songleader::init(&bus).await;
     net::init(mixer_output);
-    // stdin::init(&bus);
     bus::debug(&bus);
 
+    // stdin::init(&bus);
     tokio::signal::ctrl_c().await?;
 
     Ok(())

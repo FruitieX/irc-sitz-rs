@@ -1,6 +1,7 @@
 use crate::{
     buffer::PlaybackBuffer,
     bus::{Event, EventBus},
+    constants::SAMPLE_RATE,
     mixer::{MixerInput, Sample},
     playback::PlaybackAction,
 };
@@ -61,7 +62,7 @@ fn start_decode_event_loop(bus: EventBus, playback_buf: Arc<Mutex<PlaybackBuffer
                 }
 
                 if let Err(e) = result {
-                    eprintln!("Error while decoding file {}: {:?}", file_path, e);
+                    error!("Error while decoding file {}: {:?}", file_path, e);
                 }
             }
         }
@@ -129,7 +130,7 @@ pub fn decode_file(file_path: String, playback_buf: Arc<Mutex<PlaybackBuffer>>) 
     // Store the track identifier, we'll use it to filter packets.
     let track_id = track.id;
 
-    let mut _sample_count = 0;
+    let mut sample_count = 0;
     let mut sample_buf = None;
 
     loop {
@@ -182,11 +183,11 @@ pub fn decode_file(file_path: String, playback_buf: Arc<Mutex<PlaybackBuffer>>) 
 
             // The samples may now be access via the `samples()` function.
             let samples = buf.samples();
-            _sample_count += samples.len() / 2;
-            // println!(
-            //     "\rDecoded {:.2} seconds",
-            //     _sample_count as f64 / SAMPLE_RATE as f64
-            // );
+            sample_count += samples.len() / 2;
+            trace!(
+                "\rDecoded {:.2} seconds",
+                sample_count as f64 / SAMPLE_RATE as f64
+            );
 
             let samples: Vec<Sample> = samples.iter().copied().tuples().collect();
 

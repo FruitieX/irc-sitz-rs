@@ -54,7 +54,7 @@ pub fn init(bus: &EventBus) {
                 }
                 // handle ctrl-c
                 b'q' | 3 => {
-                    println!("Received ctrl-c, exiting");
+                    info!("Received ctrl-c, exiting");
                     std::process::exit(0);
                 }
                 _ => {}

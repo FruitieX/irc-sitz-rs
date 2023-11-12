@@ -9,6 +9,8 @@ use crate::{
     sources::symphonia::SymphoniaAction,
 };
 
+const PLAYBACK_STATE_FILE: &str = "playback_state.json";
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Song {
     pub url: String,
@@ -57,13 +59,13 @@ impl Default for PlaybackState {
 
 impl PlaybackState {
     async fn read_or_default() -> Self {
-        let res = tokio::fs::read("state.json").await;
+        let res = tokio::fs::read(PLAYBACK_STATE_FILE).await;
 
         match res {
             Ok(res) => serde_json::from_slice(&res).unwrap_or_default(),
             Err(e) => {
-                eprintln!("Error while reading playback state: {:?}", e);
-                eprintln!("Falling back to default state.");
+                info!("Error while reading playback state: {:?}", e);
+                info!("Falling back to default state.");
                 PlaybackState::default()
             }
         }
@@ -72,14 +74,19 @@ impl PlaybackState {
     fn persist(&self) {
         let json = serde_json::to_string(&self);
 
-        if let Ok(json) = json {
-            tokio::spawn(async move {
-                let res = tokio::fs::write("state.json", json).await;
+        match json {
+            Ok(json) => {
+                tokio::spawn(async move {
+                    let res = tokio::fs::write(PLAYBACK_STATE_FILE, json).await;
 
-                if let Err(e) = res {
-                    eprintln!("Error while writing state to disk: {:?}", e);
-                }
-            });
+                    if let Err(e) = res {
+                        error!("Error while writing state to disk: {:?}", e);
+                    }
+                });
+            }
+            Err(e) => {
+                error!("Error while serializing playback state: {:?}", e);
+            }
         }
     }
 }
@@ -94,7 +101,7 @@ impl Playback {
     pub async fn new(bus: EventBus) -> Playback {
         let state = PlaybackState::read_or_default().await;
 
-        println!("Initial playback state:\n{:#?}", state);
+        debug!("Initial playback state:\n{:#?}", state);
 
         Playback { bus, state }
     }

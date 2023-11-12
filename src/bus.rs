@@ -30,7 +30,7 @@ pub fn debug(bus: &EventBus) {
         let mut bus = bus.subscribe();
         loop {
             let event = bus.recv().await.unwrap();
-            println!("Received event: {:?}", event);
+            debug!("Received event: {:?}", event);
         }
     });
 }

@@ -133,8 +133,8 @@ impl SongleaderState {
         match res {
             Ok(res) => serde_json::from_slice(&res).unwrap_or_default(),
             Err(e) => {
-                eprintln!("Error while reading songleader state: {:?}", e);
-                eprintln!("Falling back to default state.");
+                info!("Error while reading songleader state: {:?}", e);
+                info!("Falling back to default state.");
                 SongleaderState::default()
             }
         }
@@ -148,12 +148,12 @@ impl SongleaderState {
                     let res = tokio::fs::write(SONGLEADER_STATE_FILE, json).await;
 
                     if let Err(e) = res {
-                        eprintln!("Error while writing songleader state: {:?}", e);
+                        error!("Error while writing songleader state: {:?}", e);
                     }
                 });
             }
             Err(e) => {
-                eprintln!("Error while serializing songleader state: {:?}", e)
+                error!("Error while serializing songleader state: {:?}", e)
             }
         }
     }
@@ -213,7 +213,7 @@ impl Songleader {
     pub async fn create(bus: &EventBus) -> Self {
         let state = SongleaderState::read_or_default().await;
 
-        println!("Initial songleader state:\n{:#?}", state);
+        debug!("Initial songleader state:\n{:#?}", state);
 
         Self {
             state,
@@ -224,7 +224,7 @@ impl Songleader {
     /// Changes the [Mode] of the [SongleaderState] and writes new state to
     /// disk.
     fn set_mode(&mut self, mode: Mode) {
-        println!("Transitioning to mode: {:?}", mode);
+        debug!("Transitioning to mode: {:?}", mode);
 
         self.state.mode = mode;
         self.state.persist();
@@ -284,7 +284,7 @@ impl Songleader {
     /// automatically enters [Mode::Singing].
     pub async fn begin(&mut self) {
         if self.state.mode != Mode::Inactive {
-            println!("Cannot call begin() when not in Inactive mode");
+            warn!("Cannot call begin() when not in Inactive mode");
             return;
         }
 
@@ -411,7 +411,7 @@ Have fun, and don't drown in the shower!
     /// Ends the party
     pub fn end(&mut self) {
         if self.state.mode == Mode::Inactive {
-            println!("Cannot call end() when already in Inactive mode");
+            warn!("Cannot call end() when already in Inactive mode");
             return;
         }
 

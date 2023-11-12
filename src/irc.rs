@@ -64,7 +64,7 @@ pub async fn init(bus: &EventBus) -> Result<()> {
                     let result = irc_sender.send_privmsg(&irc_channel, &msg);
 
                     if let Err(e) = result {
-                        eprintln!("Error while sending IRC message: {:?}", e);
+                        error!("Error while sending IRC message: {:?}", e);
                     }
                 }
             }

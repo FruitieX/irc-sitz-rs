@@ -15,15 +15,15 @@ pub fn init(source: MixerOutput) {
     tokio::spawn(async move {
         // Create a TCP listener that binds to the local address 127.0.0.1:7878
         let listener = TcpListener::bind("127.0.0.1:7878").await.unwrap();
-        println!("Listening on 127.0.0.1:7878");
+        info!("Listening on 127.0.0.1:7878");
 
         loop {
             // Accept a connection and get the stream
             let result = accept(&listener, &source).await;
 
             match result {
-                Ok(addr) => println!("Accepted connection from {}", addr),
-                Err(e) => eprintln!("Failed to accept connection: {}", e),
+                Ok(addr) => info!("Accepted connection from {}", addr),
+                Err(e) => error!("Failed to accept connection: {}", e),
             }
         }
     });
@@ -49,7 +49,7 @@ async fn accept(listener: &TcpListener, source: &MixerOutput) -> Result<SocketAd
         // This will allow players to recognize the stream as a wav file
         let header = spec.into_header_for_infinite_file();
         if let Err(e) = stream.write_all(&header[..]).await {
-            eprintln!("Failed to write wav header: {}", e);
+            warn!("Failed to write wav header to stream: {}", e);
             return;
         }
 
@@ -69,7 +69,7 @@ async fn accept(listener: &TcpListener, source: &MixerOutput) -> Result<SocketAd
             }
 
             if let Err(e) = stream.write_all(wav_data.as_slice()).await {
-                eprintln!("Failed to write sample: {}", e);
+                warn!("Failed to write sample to stream: {}", e);
                 break;
             }
         }
