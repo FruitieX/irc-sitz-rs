@@ -21,10 +21,10 @@ pub enum Priority {
 pub enum TextToSpeechAction {
     Speak { text: String, prio: Priority },
     AllowLowPrio,
-    DisallowLowPrio
+    DisallowLowPrio,
 }
 
-pub fn start(bus: &EventBus) -> MixerInput {
+pub fn init(bus: &EventBus) -> MixerInput {
     let (tx, rx) = mpsc::channel(128);
     let playback_buf = Arc::new(Mutex::new(PlaybackBuffer::default()));
 

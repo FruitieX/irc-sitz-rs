@@ -15,7 +15,7 @@ pub enum IrcAction {
     SendMsg(String),
 }
 
-pub async fn start(bus: &EventBus) -> Result<()> {
+pub async fn init(bus: &EventBus) -> Result<()> {
     let config = Config::load("Config.toml")?;
     let irc_channel = config
         .channels

@@ -19,9 +19,11 @@ use tokio::sync::{mpsc, Mutex};
 #[derive(Clone, Debug)]
 pub enum SymphoniaAction {
     PlayFile { file_path: String },
+    Pause,
+    Resume,
 }
 
-pub fn start(bus: &EventBus) -> MixerInput {
+pub fn init(bus: &EventBus) -> MixerInput {
     let (tx, rx) = mpsc::channel(128);
     let playback_buf = Arc::new(Mutex::new(PlaybackBuffer::default()));
 
@@ -81,7 +83,7 @@ fn start_emit_sample_loop(
             if sample.is_none() && decoder_hit_eof {
                 let mut playback_buf = playback_buf.lock().await;
                 playback_buf.clear();
-                bus.send(Event::Playback(PlaybackAction::EndOfFile))
+                bus.send(Event::Playback(PlaybackAction::EndOfSong))
                     .unwrap();
             }
 

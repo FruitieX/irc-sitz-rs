@@ -17,7 +17,7 @@ pub type Sample = (i16, i16);
 pub type MixerInput = mpsc::Receiver<Sample>;
 pub type MixerOutput = watch::Receiver<Vec<Sample>>;
 
-pub fn start(bus: &EventBus, mut sources: Vec<MixerInput>) -> Result<MixerOutput> {
+pub fn init(bus: &EventBus, mut sources: Vec<MixerInput>) -> Result<MixerOutput> {
     let (tx, rx) = watch::channel(Default::default());
 
     let bus = bus.clone();

@@ -140,7 +140,7 @@ impl SongleaderState {
         }
     }
 
-    fn write_state(&self) {
+    fn persist(&self) {
         let json = serde_json::to_vec(self);
         match json {
             Ok(json) => {
@@ -176,7 +176,7 @@ impl SongleaderState {
         }
 
         self.requests.push(song.clone());
-        self.write_state();
+        self.persist();
 
         Ok(())
     }
@@ -213,7 +213,7 @@ impl Songleader {
     pub async fn create(bus: &EventBus) -> Self {
         let state = SongleaderState::read_or_default().await;
 
-        println!("Initial state:\n{:#?}", state);
+        println!("Initial songleader state:\n{:#?}", state);
 
         Self {
             state,
@@ -227,7 +227,7 @@ impl Songleader {
         println!("Transitioning to mode: {:?}", mode);
 
         self.state.mode = mode;
-        self.state.write_state();
+        self.state.persist();
     }
 
     /// Convenience method for sending text to speech messages
@@ -420,7 +420,7 @@ Have fun, and don't drown in the shower!
     }
 }
 
-pub async fn start(bus: &EventBus) {
+pub async fn init(bus: &EventBus) {
     let songleader = Arc::new(RwLock::new(Songleader::create(bus).await));
 
     handle_incoming_event_loop(bus.clone(), songleader.clone());
@@ -454,73 +454,87 @@ fn handle_incoming_event_loop(bus: EventBus, songleader: Arc<RwLock<Songleader>>
         loop {
             let event = bus_rx.recv().await.unwrap();
 
-            let mut songleader = songleader.write().await;
-
             if let Event::Songleader(action) = event {
-                match action {
-                    SongleaderAction::RequestSong { song } => {
-                        let result = songleader.state.add_request(&song);
-                        match result {
-                            Ok(_) => songleader.irc_say(&format!("Added {song} to requests")),
-                            Err(e) => songleader.irc_say(&format!("Error: {:?}", e)),
-                        }
-                    }
+                let songleader = songleader.clone();
+                let bus = bus.clone();
 
-                    SongleaderAction::Tempo { nick } => {
-                        if let Mode::Tempo { nicks, .. } = &mut songleader.state.mode {
-                            nicks.insert(nick);
-
-                            if nicks.len() > NUM_TEMPO_NICKS {
-                                songleader.enter_bingo_mode();
-                            }
-                        }
-                    }
-
-                    SongleaderAction::Bingo { nick } => {
-                        if let Mode::Bingo { nicks, .. } = &mut songleader.state.mode {
-                            nicks.insert(nick);
-
-                            if nicks.len() > NUM_BINGO_NICKS {
-                                songleader.enter_singing_mode().await;
-                            }
-                        }
-                    }
-
-                    SongleaderAction::Skål => {
-                        if let Mode::Singing = &mut songleader.state.mode {
-                            songleader.enter_tempo_mode();
-                        }
-                    }
-                    SongleaderAction::ListSongs => {
-                        let songs = songleader.state.get_songs();
-                        let msg = songs.join(", ");
-                        songleader.irc_say(&msg);
-                    }
-                    SongleaderAction::ForceTempo => songleader.enter_tempo_mode(),
-                    SongleaderAction::ForceBingo => songleader.enter_bingo_mode(),
-                    SongleaderAction::ForceSinging => songleader.enter_singing_mode().await,
-                    SongleaderAction::Pause => songleader.enter_inactive_mode(),
-                    SongleaderAction::End => songleader.end(),
-                    SongleaderAction::Begin => songleader.begin().await,
-                    SongleaderAction::Help => {
-                        // Disallow help text outside of these modes
-                        if !matches!(songleader.state.mode, Mode::Tempo { .. } | Mode::Inactive) {
-                            continue;
-                        }
-
-                        // Avoid blocking current task by spawning a new one to
-                        // flood the help text
-                        let bus = bus.clone();
-                        tokio::spawn(async move {
-                            for line in HELP_TEXT.split('\n') {
-                                bus.send(Event::Irc(IrcAction::SendMsg(line.to_string())))
-                                    .unwrap();
-                                sleep(ANTI_FLOOD_DELAY).await;
-                            }
-                        });
-                    }
-                }
+                tokio::spawn(async move {
+                    handle_incoming_event(bus, songleader, action).await;
+                });
             }
         }
     });
+}
+
+/// Decide what to do based on the incoming event
+async fn handle_incoming_event(
+    bus: EventBus,
+    songleader: Arc<RwLock<Songleader>>,
+    action: SongleaderAction,
+) {
+    let mut songleader = songleader.write().await;
+
+    match action {
+        SongleaderAction::RequestSong { song } => {
+            let result = songleader.state.add_request(&song);
+            match result {
+                Ok(_) => songleader.irc_say(&format!("Added {song} to requests")),
+                Err(e) => songleader.irc_say(&format!("Error: {:?}", e)),
+            }
+        }
+
+        SongleaderAction::Tempo { nick } => {
+            if let Mode::Tempo { nicks, .. } = &mut songleader.state.mode {
+                nicks.insert(nick);
+
+                if nicks.len() > NUM_TEMPO_NICKS {
+                    songleader.enter_bingo_mode();
+                }
+            }
+        }
+
+        SongleaderAction::Bingo { nick } => {
+            if let Mode::Bingo { nicks, .. } = &mut songleader.state.mode {
+                nicks.insert(nick);
+
+                if nicks.len() > NUM_BINGO_NICKS {
+                    songleader.enter_singing_mode().await;
+                }
+            }
+        }
+
+        SongleaderAction::Skål => {
+            if let Mode::Singing = &mut songleader.state.mode {
+                songleader.enter_tempo_mode();
+            }
+        }
+        SongleaderAction::ListSongs => {
+            let songs = songleader.state.get_songs();
+            let msg = songs.join(", ");
+            songleader.irc_say(&msg);
+        }
+        SongleaderAction::ForceTempo => songleader.enter_tempo_mode(),
+        SongleaderAction::ForceBingo => songleader.enter_bingo_mode(),
+        SongleaderAction::ForceSinging => songleader.enter_singing_mode().await,
+        SongleaderAction::Pause => songleader.enter_inactive_mode(),
+        SongleaderAction::End => songleader.end(),
+        SongleaderAction::Begin => songleader.begin().await,
+        SongleaderAction::Help => {
+            // Disallow help text outside of these modes
+            if !matches!(songleader.state.mode, Mode::Tempo { .. } | Mode::Inactive) {
+                return;
+            }
+
+            // Avoid blocking current task by spawning a new one to
+            // flood the help text
+            let bus = bus.clone();
+            tokio::spawn(async move {
+                for line in HELP_TEXT.split('\n') {
+                    bus.send(Event::Irc(IrcAction::SendMsg(line.to_string())))
+                        .unwrap();
+                    sleep(ANTI_FLOOD_DELAY).await;
+                }
+            });
+        }
+    }
 }

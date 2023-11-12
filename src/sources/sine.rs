@@ -1,8 +1,8 @@
 use tokio::sync::mpsc;
 
-use crate::{mixer::MixerInput, constants::SAMPLE_RATE};
+use crate::{constants::SAMPLE_RATE, mixer::MixerInput};
 
-pub fn start(f: f64) -> MixerInput {
+pub fn init(f: f64) -> MixerInput {
     let (tx, rx) = mpsc::channel(128);
 
     tokio::spawn(async move {

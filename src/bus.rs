@@ -19,7 +19,7 @@ pub enum Event {
     Songleader(SongleaderAction),
 }
 
-pub fn start() -> EventBus {
+pub fn init() -> EventBus {
     let (tx, _rx) = broadcast::channel::<Event>(100);
     tx
 }

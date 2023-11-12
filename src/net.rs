@@ -11,7 +11,7 @@ use hound::{SampleFormat, WavSpec};
 use crate::constants::{BIT_DEPTH, CHANNELS, SAMPLE_RATE};
 use crate::mixer::MixerOutput;
 
-pub fn start(source: MixerOutput) {
+pub fn init(source: MixerOutput) {
     tokio::spawn(async move {
         // Create a TCP listener that binds to the local address 127.0.0.1:7878
         let listener = TcpListener::bind("127.0.0.1:7878").await.unwrap();

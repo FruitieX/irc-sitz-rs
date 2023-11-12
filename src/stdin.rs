@@ -5,7 +5,8 @@ use crate::{
     sources,
 };
 
-pub fn start(bus: &EventBus) {
+#[allow(dead_code)]
+pub fn init(bus: &EventBus) {
     let bus = bus.clone();
     tokio::spawn(async move {
         let stdin = tokio::io::stdin();

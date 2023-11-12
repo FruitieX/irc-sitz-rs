@@ -13,14 +13,14 @@ mod stdin;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let bus = bus::start();
+    let bus = bus::init();
 
-    let _sine_source1 = sources::sine::start(440.0);
-    let _sine_source2 = sources::sine::start(640.0);
-    let espeak_source = sources::espeak::start(&bus);
-    let symphonia_source = sources::symphonia::start(&bus);
+    let _sine_source1 = sources::sine::init(440.0);
+    let _sine_source2 = sources::sine::init(640.0);
+    let espeak_source = sources::espeak::init(&bus);
+    let symphonia_source = sources::symphonia::init(&bus);
 
-    let mixer_output = mixer::start(
+    let mixer_output = mixer::init(
         &bus,
         vec![
             espeak_source,
@@ -30,10 +30,11 @@ async fn main() -> Result<()> {
         ],
     )?;
 
-    irc::start(&bus).await?;
-    songleader::start(&bus).await;
-    net::start(mixer_output);
-    // stdin::start(&bus);
+    playback::init(&bus).await;
+    irc::init(&bus).await?;
+    songleader::init(&bus).await;
+    net::init(mixer_output);
+    // stdin::init(&bus);
     bus::debug(&bus);
 
     tokio::signal::ctrl_c().await?;
