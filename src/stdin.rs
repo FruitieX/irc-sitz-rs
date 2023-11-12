@@ -1,9 +1,8 @@
-use tokio::io::AsyncReadExt;
-
 use crate::{
     bus::{self, EventBus},
     sources,
 };
+use tokio::io::AsyncReadExt;
 
 #[allow(dead_code)]
 pub fn init(bus: &EventBus) {

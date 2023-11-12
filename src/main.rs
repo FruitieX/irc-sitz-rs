@@ -11,6 +11,7 @@ mod playback;
 mod songleader;
 mod sources;
 mod stdin;
+mod youtube;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -33,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
         ],
     )?;
 
+    youtube::init().await?;
     playback::init(&bus).await;
     irc::init(&bus).await?;
     songleader::init(&bus).await;

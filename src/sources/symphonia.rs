@@ -4,21 +4,19 @@ use crate::{
     constants::SAMPLE_RATE,
     mixer::{MixerInput, Sample},
     playback::PlaybackAction,
+    youtube::get_yt_media_source_stream,
 };
 use anyhow::{Context, Result};
-use futures::TryStreamExt;
 use itertools::Itertools;
 use std::path::Path;
 use std::{fs::File, sync::Arc};
+use symphonia::core::audio::SampleBuffer;
+use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
-use symphonia::core::{audio::SampleBuffer, io::MediaSource};
-use symphonia::core::{codecs::DecoderOptions, io::ReadOnlySource};
 use tokio::sync::{mpsc, Mutex};
-use tokio_util::io::StreamReader;
-use youtube_dl::{download_yt_dlp, YoutubeDl};
 
 #[derive(Clone, Debug)]
 pub enum SymphoniaAction {
@@ -29,15 +27,6 @@ pub enum SymphoniaAction {
 }
 
 pub async fn init(bus: &EventBus) -> Result<MixerInput> {
-    let yt_dlp_binary_exists = tokio::task::spawn_blocking(|| Path::new("./yt-dlp").exists())
-        .await
-        .unwrap();
-
-    if !yt_dlp_binary_exists {
-        info!("Downloading yt-dlp binary");
-        download_yt_dlp(".").await?;
-    }
-
     let (tx, rx) = mpsc::channel(128);
     let playback_buf = Arc::new(Mutex::new(PlaybackBuffer::default()));
 
@@ -154,39 +143,6 @@ fn start_emit_sample_loop(
                 .expect("Expected mixer channel to never close");
         }
     });
-}
-
-pub async fn get_yt_media_source_stream(url: String) -> Result<MediaSourceStream> {
-    let output = YoutubeDl::new(url)
-        .youtube_dl_path("./yt-dlp")
-        .extract_audio(true)
-        // until symphonia has opus support
-        .format("bestaudio[ext=m4a]")
-        .run_async()
-        .await?
-        .into_single_video();
-
-    let video = output.context("No video found")?;
-
-    debug!(
-        "Found video {:?} with duration {:?}",
-        &video.title, &video.duration
-    );
-
-    let url = video.url.context("No URL found in yt-dlp JSON!")?;
-    let stream = reqwest::get(&url)
-        .await?
-        .bytes_stream()
-        .map_err(|e| futures::io::Error::new(std::io::ErrorKind::Other, e));
-
-    let read = StreamReader::new(stream);
-
-    // let reader = BufReader::new(stream.into_async_read());
-    let sync_reader = tokio_util::io::SyncIoBridge::new(read);
-
-    let source = Box::new(ReadOnlySource::new(sync_reader)) as Box<dyn MediaSource>;
-
-    Ok(MediaSourceStream::new(source, Default::default()))
 }
 
 pub fn decode_source(

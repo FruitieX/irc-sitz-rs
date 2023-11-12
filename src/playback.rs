@@ -1,20 +1,21 @@
-use std::sync::Arc;
-
-use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
-
 use crate::{
     bus::{Event, EventBus},
     irc::IrcAction,
     sources::symphonia::SymphoniaAction,
 };
+use serde::{Deserialize, Serialize};
+use std::{sync::Arc, time::Duration};
+use tokio::sync::RwLock;
 
 const PLAYBACK_STATE_FILE: &str = "playback_state.json";
+pub const MAX_SONG_DURATION: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Song {
     pub url: String,
-    pub video_id: String,
+    pub title: String,
+    pub channel: String,
+    pub duration: u64,
     pub queued_by: String,
 }
 
@@ -100,7 +101,7 @@ pub struct Playback {
 }
 
 impl Playback {
-    pub async fn new(bus: EventBus) -> Playback {
+    pub async fn create(bus: EventBus) -> Playback {
         let state = PlaybackState::read_or_default().await;
 
         debug!("Initial playback state:\n{:#?}", state);
@@ -119,8 +120,7 @@ impl Playback {
         let queue_was_empty = self.state.queued_songs.is_empty();
 
         self.state.queued_songs.push(song.clone());
-
-        let msg = format!("Added {} to the queue.", song.video_id);
+        let msg = format!("Added {} to the queue.", song.title);
         self.irc_say(&msg);
 
         if !self.state.is_playing && self.state.should_play && queue_was_empty {
@@ -208,7 +208,7 @@ impl Playback {
 }
 
 pub async fn init(bus: &EventBus) {
-    let playback = Arc::new(RwLock::new(Playback::new(bus.clone()).await));
+    let playback = Arc::new(RwLock::new(Playback::create(bus.clone()).await));
 
     handle_incoming_event_loop(bus.clone(), playback);
 }

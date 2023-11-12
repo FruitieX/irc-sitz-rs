@@ -1,14 +1,12 @@
 #![allow(non_upper_case_globals)]
-use std::sync::Arc;
-
-use serde::Deserialize;
-use tokio::sync::{mpsc, Mutex};
-
 use crate::{
     buffer::PlaybackBuffer,
     bus::{Event, EventBus},
     mixer::{MixerAction, MixerInput, Sample},
 };
+use serde::Deserialize;
+use std::sync::Arc;
+use tokio::sync::{mpsc, Mutex};
 
 #[derive(Clone, Debug, Deserialize, Default, PartialEq)]
 pub enum Priority {

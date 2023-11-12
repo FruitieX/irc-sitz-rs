@@ -1,10 +1,9 @@
-use anyhow::Result;
-use tokio::sync::{mpsc, watch};
-
 use crate::{
     bus::{Event, EventBus},
     constants::SAMPLE_RATE,
 };
+use anyhow::Result;
+use tokio::sync::{mpsc, watch};
 
 const TARGET_CHUNK_SIZE: usize = 128;
 

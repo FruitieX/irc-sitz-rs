@@ -1,14 +1,13 @@
 use crate::{
     bus::{Event, EventBus},
-    playback::{PlaybackAction, Song},
+    playback::{PlaybackAction, MAX_SONG_DURATION},
     songleader::SongleaderAction,
     sources::espeak::{Priority, TextToSpeechAction},
+    youtube::get_yt_song_info,
 };
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use irc::client::prelude::*;
-use lazy_static::lazy_static;
-use regex::Regex;
 
 #[derive(Clone, Debug)]
 pub enum IrcAction {
@@ -37,15 +36,21 @@ pub async fn init(bus: &EventBus) -> Result<()> {
         // Loop over incoming IRC messages
         tokio::spawn(async move {
             while let Ok(Some(message)) = stream.next().await.transpose() {
-                let action = message_to_action(&message);
-                let target = message.response_target();
+                let target = message.response_target().map(|s| s.to_string());
+                let message = message.clone();
 
-                // Dispatch if msg resulted in action and msg is from target irc_channel
-                if let Some(action) = action {
-                    if target == Some(&irc_channel) {
-                        bus.send(action).unwrap();
+                let irc_channel = irc_channel.clone();
+                let bus = bus.clone();
+                tokio::spawn(async move {
+                    let action = message_to_action(&message).await;
+
+                    // Dispatch if msg resulted in action and msg is from target irc_channel
+                    if let Some(action) = action {
+                        if target == Some(irc_channel) {
+                            bus.send(action).unwrap();
+                        }
                     }
-                }
+                });
             }
         });
     }
@@ -74,7 +79,7 @@ pub async fn init(bus: &EventBus) -> Result<()> {
     Ok(())
 }
 
-fn message_to_action(message: &Message) -> Option<Event> {
+async fn message_to_action(message: &Message) -> Option<Event> {
     if let Command::PRIVMSG(_channel, text) = &message.command {
         let nick = message.source_nickname()?.to_string();
 
@@ -87,20 +92,20 @@ fn message_to_action(message: &Message) -> Option<Event> {
         match cmd {
             "!p" => {
                 let url = cmd_split.next()?;
-                lazy_static! {
-                    static ref VIDEO_ID_REGEX: Regex =
-                        Regex::new(r".*(?:youtu.be/|v/|u/\w/|embed/|watch\?v=)([^#\&\?]*).*")
-                            .unwrap();
-                };
-                let caps = VIDEO_ID_REGEX.captures(url)?;
-                let video_id = caps.get(1)?.as_str();
-                let song = Song {
-                    video_id: video_id.to_string(),
-                    url: url.to_string(),
-                    queued_by: nick,
-                };
+                let song = get_yt_song_info(url.to_string(), nick).await;
 
-                Some(Event::Playback(PlaybackAction::Enqueue { song }))
+                match song {
+                    Ok(song) if song.duration > MAX_SONG_DURATION.as_secs() => {
+                        Some(Event::Irc(IrcAction::SendMsg(format!(
+                            "Requested song is too long! Max duration is {} seconds.",
+                            MAX_SONG_DURATION.as_secs()
+                        ))))
+                    }
+                    Ok(song) => Some(Event::Playback(PlaybackAction::Enqueue { song })),
+                    Err(e) => Some(Event::Irc(IrcAction::SendMsg(format!(
+                        "Error while getting song info {e}"
+                    )))),
+                }
             }
             "!q" => Some(Event::Playback(PlaybackAction::ListQueue)),
             "!speak" => {
@@ -129,7 +134,9 @@ fn message_to_action(message: &Message) -> Option<Event> {
                 let subcommand = cmd_split.next()?;
 
                 match subcommand {
-                    "force-tempo-mode" | "resume" => Some(Event::Songleader(SongleaderAction::ForceTempo)),
+                    "force-tempo-mode" | "resume" => {
+                        Some(Event::Songleader(SongleaderAction::ForceTempo))
+                    }
                     "force-bingo-mode" => Some(Event::Songleader(SongleaderAction::ForceBingo)),
                     "force-singing-mode" => Some(Event::Songleader(SongleaderAction::ForceSinging)),
                     "pause" => Some(Event::Songleader(SongleaderAction::Pause)),
