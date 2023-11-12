@@ -129,9 +129,9 @@ fn message_to_action(message: &Message) -> Option<Event> {
                 let subcommand = cmd_split.next()?;
 
                 match subcommand {
-                    "tempo" => Some(Event::Songleader(SongleaderAction::ForceTempo)),
-                    "bingo" => Some(Event::Songleader(SongleaderAction::ForceBingo)),
-                    "singing" => Some(Event::Songleader(SongleaderAction::ForceSinging)),
+                    "force-tempo-mode" | "resume" => Some(Event::Songleader(SongleaderAction::ForceTempo)),
+                    "force-bingo-mode" => Some(Event::Songleader(SongleaderAction::ForceBingo)),
+                    "force-singing-mode" => Some(Event::Songleader(SongleaderAction::ForceSinging)),
                     "pause" => Some(Event::Songleader(SongleaderAction::Pause)),
                     "end" => Some(Event::Songleader(SongleaderAction::End)),
                     "begin" => Some(Event::Songleader(SongleaderAction::Begin)),
