@@ -6,67 +6,128 @@ use crate::{
     playback::PlaybackAction,
 };
 use anyhow::{Context, Result};
+use futures::TryStreamExt;
 use itertools::Itertools;
 use std::path::Path;
 use std::{fs::File, sync::Arc};
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
+use symphonia::core::{audio::SampleBuffer, io::MediaSource};
+use symphonia::core::{codecs::DecoderOptions, io::ReadOnlySource};
 use tokio::sync::{mpsc, Mutex};
+use tokio_util::io::StreamReader;
+use youtube_dl::{download_yt_dlp, YoutubeDl};
 
 #[derive(Clone, Debug)]
 pub enum SymphoniaAction {
     PlayFile { file_path: String },
+    PlayYtUrl { url: String },
     Pause,
     Resume,
 }
 
-pub fn init(bus: &EventBus) -> MixerInput {
+pub async fn init(bus: &EventBus) -> Result<MixerInput> {
+    let yt_dlp_binary_exists = tokio::task::spawn_blocking(|| Path::new("./yt-dlp").exists())
+        .await
+        .unwrap();
+
+    if !yt_dlp_binary_exists {
+        info!("Downloading yt-dlp binary");
+        download_yt_dlp(".").await?;
+    }
+
     let (tx, rx) = mpsc::channel(128);
     let playback_buf = Arc::new(Mutex::new(PlaybackBuffer::default()));
 
     start_decode_event_loop(bus.clone(), playback_buf.clone());
     start_emit_sample_loop(bus.clone(), tx, playback_buf);
 
-    rx
+    Ok(rx)
 }
 
 fn start_decode_event_loop(bus: EventBus, playback_buf: Arc<Mutex<PlaybackBuffer>>) {
     tokio::spawn(async move {
         // Check for any new events on the bus
-        let mut bus = bus.subscribe();
+        let mut bus_tx = bus.subscribe();
 
         loop {
-            let event = bus.recv().await.unwrap();
+            let event = bus_tx.recv().await.unwrap();
 
-            if let Event::Symphonia(SymphoniaAction::PlayFile { file_path }) = event {
-                {
-                    let mut playback_buf = playback_buf.lock().await;
-                    playback_buf.clear();
-                }
+            if let Event::Symphonia(action) = event {
+                let playback_buf = playback_buf.clone();
+                tokio::spawn(async move {
+                    let result = handle_incoming_event(action, playback_buf).await;
 
-                let result = {
-                    let file_path = file_path.clone();
-                    let playback_buf = playback_buf.clone();
-                    tokio::task::spawn_blocking(|| decode_file(file_path, playback_buf))
-                        .await
-                        .unwrap()
-                };
-
-                {
-                    let mut playback_buf = playback_buf.lock().await;
-                    playback_buf.set_eof(true);
-                }
-
-                if let Err(e) = result {
-                    error!("Error while decoding file {}: {:?}", file_path, e);
-                }
+                    if let Err(e) = result {
+                        error!("Error while handling incoming event: {:?}", e);
+                    }
+                });
             }
         }
     });
+}
+
+async fn handle_incoming_event(
+    action: SymphoniaAction,
+    playback_buf: Arc<Mutex<PlaybackBuffer>>,
+) -> Result<()> {
+    match action {
+        SymphoniaAction::PlayFile { file_path } => {
+            {
+                let mut playback_buf = playback_buf.lock().await;
+                playback_buf.clear();
+            }
+
+            {
+                let playback_buf = playback_buf.clone();
+
+                // Create a media source. Note that the MediaSource trait is automatically implemented for File,
+                // among other types.
+                let source = Box::new(File::open(Path::new(&file_path))?);
+                let mss = MediaSourceStream::new(source, Default::default());
+                tokio::task::spawn_blocking(|| decode_source(mss, playback_buf)).await??
+            };
+
+            info!("Finished decoding audio from {file_path}");
+
+            {
+                let mut playback_buf = playback_buf.lock().await;
+                playback_buf.set_eof(true);
+            }
+        }
+        SymphoniaAction::PlayYtUrl { url } => {
+            {
+                let mut playback_buf = playback_buf.lock().await;
+                playback_buf.clear();
+            }
+
+            {
+                let playback_buf = playback_buf.clone();
+
+                let mss = get_yt_media_source_stream(url.clone()).await?;
+                tokio::task::spawn_blocking(|| decode_source(mss, playback_buf)).await??
+            };
+
+            info!("Finished decoding audio from {url}");
+
+            {
+                let mut playback_buf = playback_buf.lock().await;
+                playback_buf.set_eof(true);
+            }
+        }
+        SymphoniaAction::Pause => {
+            let mut playback_buf = playback_buf.lock().await;
+            playback_buf.set_paused(true);
+        }
+        SymphoniaAction::Resume => {
+            let mut playback_buf = playback_buf.lock().await;
+            playback_buf.set_paused(false);
+        }
+    }
+
+    Ok(())
 }
 
 fn start_emit_sample_loop(
@@ -95,14 +156,43 @@ fn start_emit_sample_loop(
     });
 }
 
-pub fn decode_file(file_path: String, playback_buf: Arc<Mutex<PlaybackBuffer>>) -> Result<()> {
-    // Create a media source. Note that the MediaSource trait is automatically implemented for File,
-    // among other types.
-    let file = Box::new(File::open(Path::new(&file_path)).unwrap());
+pub async fn get_yt_media_source_stream(url: String) -> Result<MediaSourceStream> {
+    let output = YoutubeDl::new(url)
+        .youtube_dl_path("./yt-dlp")
+        .extract_audio(true)
+        // until symphonia has opus support
+        .format("bestaudio[ext=m4a]")
+        .run_async()
+        .await?
+        .into_single_video();
 
-    // Create the media source stream using the boxed media source from above.
-    let mss = MediaSourceStream::new(file, Default::default());
+    let video = output.context("No video found")?;
 
+    debug!(
+        "Found video {:?} with duration {:?}",
+        &video.title, &video.duration
+    );
+
+    let url = video.url.context("No URL found in yt-dlp JSON!")?;
+    let stream = reqwest::get(&url)
+        .await?
+        .bytes_stream()
+        .map_err(|e| futures::io::Error::new(std::io::ErrorKind::Other, e));
+
+    let read = StreamReader::new(stream);
+
+    // let reader = BufReader::new(stream.into_async_read());
+    let sync_reader = tokio_util::io::SyncIoBridge::new(read);
+
+    let source = Box::new(ReadOnlySource::new(sync_reader)) as Box<dyn MediaSource>;
+
+    Ok(MediaSourceStream::new(source, Default::default()))
+}
+
+pub fn decode_source(
+    mss: MediaSourceStream,
+    playback_buf: Arc<Mutex<PlaybackBuffer>>,
+) -> Result<()> {
     // Create a hint to help the format registry guess what format reader is appropriate. In this
     // example we'll leave it empty.
     let hint = Hint::new();

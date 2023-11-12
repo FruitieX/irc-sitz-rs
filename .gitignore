@@ -1,4 +1,5 @@
 /target
 /Config.toml
-/songleader_state.json
+/*state.json
+/yt-dlp
 *.m4a

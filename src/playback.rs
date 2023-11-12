@@ -34,9 +34,11 @@ struct PlaybackState {
     played_songs: Vec<Song>,
     queued_songs: Vec<Song>,
 
+    #[serde(skip_deserializing)]
     /// Whether the client has had a song loaded or not
     song_loaded: bool,
 
+    #[serde(skip_deserializing)]
     /// Whether a song is currently being played by the client
     is_playing: bool,
 
@@ -72,7 +74,7 @@ impl PlaybackState {
     }
 
     fn persist(&self) {
-        let json = serde_json::to_string(&self);
+        let json = serde_json::to_string_pretty(&self);
 
         match json {
             Ok(json) => {
@@ -152,8 +154,8 @@ impl Playback {
         self.state.song_loaded = true;
 
         self.bus
-            .send(Event::Symphonia(SymphoniaAction::PlayFile {
-                file_path: song.url,
+            .send(Event::Symphonia(SymphoniaAction::PlayYtUrl {
+                url: song.url,
             }))
             .unwrap();
 
@@ -236,20 +238,20 @@ async fn handle_incoming_event(action: PlaybackAction, playback: Arc<RwLock<Play
             playback.list_queue();
         }
         PlaybackAction::Play => {
-            playback.state.is_playing = true;
             playback.state.should_play = true;
 
-            if !playback.state.song_loaded {
+            if playback.state.song_loaded {
+                playback.state.is_playing = true;
+                playback
+                    .bus
+                    .send(Event::Symphonia(SymphoniaAction::Resume))
+                    .unwrap();
+            } else {
                 // Play next song if it exists
                 let song = playback.state.queued_songs.get(0).cloned();
                 if let Some(song) = song {
                     playback.play_song(song);
                 }
-            } else {
-                playback
-                    .bus
-                    .send(Event::Symphonia(SymphoniaAction::Resume))
-                    .unwrap();
             }
 
             playback.state.persist();

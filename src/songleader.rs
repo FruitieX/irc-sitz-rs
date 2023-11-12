@@ -141,7 +141,7 @@ impl SongleaderState {
     }
 
     fn persist(&self) {
-        let json = serde_json::to_vec(self);
+        let json = serde_json::to_string_pretty(self);
         match json {
             Ok(json) => {
                 tokio::spawn(async move {

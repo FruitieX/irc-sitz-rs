@@ -5,6 +5,7 @@ pub struct PlaybackBuffer {
     position: usize,
     buffer: Vec<Sample>,
     eof: bool,
+    paused: bool,
 }
 
 impl PlaybackBuffer {
@@ -15,6 +16,10 @@ impl PlaybackBuffer {
     }
 
     pub fn next_sample(&mut self) -> Option<Sample> {
+        if self.paused {
+            return Some((0, 0));
+        }
+
         let sample = self.buffer.get(self.position).cloned();
         self.position += 1;
         if self.position >= self.buffer.len() {
@@ -34,5 +39,9 @@ impl PlaybackBuffer {
 
     pub fn set_eof(&mut self, eof: bool) {
         self.eof = eof;
+    }
+
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
     }
 }

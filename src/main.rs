@@ -21,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
     let _sine_source1 = sources::sine::init(440.0);
     let _sine_source2 = sources::sine::init(640.0);
     let espeak_source = sources::espeak::init(&bus);
-    let symphonia_source = sources::symphonia::init(&bus);
+    let symphonia_source = sources::symphonia::init(&bus).await?;
 
     let mixer_output = mixer::init(
         &bus,
