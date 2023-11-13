@@ -502,7 +502,11 @@ async fn handle_incoming_event(
         }
         SongleaderAction::ListSongs => {
             let songs = songleader.state.get_songs();
-            let msg = songs.join(", ");
+            let msg = if songs.is_empty() {
+                "No requested songs found :(".to_string()
+            } else {
+                format!("Song requests: {}", songs.join(", "))
+            };
             songleader.irc_say(&msg);
         }
         SongleaderAction::ForceTempo => songleader.enter_tempo_mode(),
