@@ -1,6 +1,6 @@
 use crate::{
     buffer::PlaybackBuffer,
-    bus::{Event, EventBus},
+    event::{Event, EventBus},
     constants::SAMPLE_RATE,
     mixer::{MixerInput, Sample},
     playback::PlaybackAction,
@@ -42,7 +42,7 @@ fn start_decode_event_loop(bus: EventBus, playback_buf: Arc<Mutex<PlaybackBuffer
         let mut bus_tx = bus.subscribe();
 
         loop {
-            let event = bus_tx.recv().await.unwrap();
+            let event = bus_tx.recv().await;
 
             if let Event::Symphonia(action) = event {
                 let playback_buf = playback_buf.clone();
@@ -135,7 +135,6 @@ fn start_emit_sample_loop(
                 let mut playback_buf = playback_buf.lock().await;
                 playback_buf.clear();
                 bus.send(Event::Playback(PlaybackAction::EndOfSong))
-                    .unwrap();
             }
 
             tx.send(sample.unwrap_or_default())

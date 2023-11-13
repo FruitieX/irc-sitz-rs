@@ -1,5 +1,5 @@
 use crate::{
-    bus::{Event, EventBus},
+    event::{Event, EventBus},
     constants::SAMPLE_RATE,
 };
 use anyhow::Result;
@@ -27,10 +27,10 @@ pub fn init(bus: &EventBus, mut sources: Vec<MixerInput>) -> Result<MixerOutput>
         let mut secondary_volume = 1.0;
         let mut secondary_volume_target = 1.0;
 
-        let mut bus = bus.subscribe();
+        let mut subscriber = bus.subscribe();
 
         loop {
-            while let Ok(event) = bus.try_recv() {
+            while let Ok(event) = subscriber.try_recv() {
                 if let Event::Mixer(MixerAction::SetSecondaryChannelsVolume { volume }) = event {
                     secondary_volume_target = volume;
                 }

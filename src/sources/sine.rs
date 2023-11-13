@@ -1,6 +1,7 @@
 use crate::{constants::SAMPLE_RATE, mixer::MixerInput};
 use tokio::sync::mpsc;
 
+#[allow(dead_code)]
 pub fn init(f: f64) -> MixerInput {
     let (tx, rx) = mpsc::channel(128);
 

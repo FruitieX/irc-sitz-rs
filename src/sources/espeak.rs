@@ -1,7 +1,7 @@
 #![allow(non_upper_case_globals)]
 use crate::{
     buffer::PlaybackBuffer,
-    bus::{Event, EventBus},
+    event::{Event, EventBus},
     mixer::{MixerAction, MixerInput, Sample},
 };
 use serde::Deserialize;
@@ -38,13 +38,19 @@ fn start_speak_event_loop(bus: EventBus, playback_buf: Arc<Mutex<PlaybackBuffer>
         let mut bus = bus.subscribe();
 
         loop {
-            let event = bus.recv().await.unwrap();
+            let event = bus.recv().await;
 
             if let Event::TextToSpeech(TextToSpeechAction::Speak { text, prio }) = event {
                 let spoken =
-                    tokio::task::spawn_blocking(move || espeakng_sys_example::speak(&text))
-                        .await
-                        .unwrap();
+                    tokio::task::spawn_blocking(move || espeakng_sys_example::speak(&text)).await;
+
+                let spoken = match spoken {
+                    Ok(spoken) => spoken,
+                    Err(e) => {
+                        error!("Error while calling espeakng: {:?}", e);
+                        continue;
+                    }
+                };
 
                 let mut playback_buf = playback_buf.lock().await;
                 if prio == Priority::High {
@@ -97,7 +103,6 @@ fn start_emit_sample_loop(
                         volume: 1.0,
                     }))
                 }
-                .unwrap();
             }
 
             // Send the same sample twice to resample from 22050 Hz to to 44100 Hz

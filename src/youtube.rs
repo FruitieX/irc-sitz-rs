@@ -9,9 +9,8 @@ use tokio_util::io::StreamReader;
 use youtube_dl::{download_yt_dlp, YoutubeDl};
 
 pub async fn init() -> anyhow::Result<()> {
-    let yt_dlp_binary_exists = tokio::task::spawn_blocking(|| Path::new("./yt-dlp").exists())
-        .await
-        .unwrap();
+    let yt_dlp_binary_exists =
+        tokio::task::spawn_blocking(|| Path::new("./yt-dlp").exists()).await?;
 
     if !yt_dlp_binary_exists {
         info!("Downloading yt-dlp binary");

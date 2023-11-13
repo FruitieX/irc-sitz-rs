@@ -2,7 +2,7 @@
 extern crate log;
 
 mod buffer;
-mod bus;
+mod event;
 mod constants;
 mod irc;
 mod mixer;
@@ -17,10 +17,10 @@ mod youtube;
 async fn main() -> anyhow::Result<()> {
     pretty_env_logger::init();
 
-    let bus = bus::init();
+    let bus = event::EventBus::new();
 
-    let _sine_source1 = sources::sine::init(440.0);
-    let _sine_source2 = sources::sine::init(640.0);
+    // let sine_source1 = sources::sine::init(440.0);
+    // let sine_source2 = sources::sine::init(640.0);
     let espeak_source = sources::espeak::init(&bus);
     let symphonia_source = sources::symphonia::init(&bus).await?;
 
@@ -39,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
     irc::init(&bus).await?;
     songleader::init(&bus).await;
     net::init(mixer_output);
-    bus::debug(&bus);
+    event::debug(&bus);
 
     // stdin::init(&bus);
     tokio::signal::ctrl_c().await?;

@@ -1,5 +1,5 @@
 use crate::{
-    bus::{Event, EventBus},
+    event::{Event, EventBus},
     irc::IrcAction,
     playback::PlaybackAction,
     sources::espeak::{Priority, TextToSpeechAction},
@@ -236,27 +236,21 @@ impl Songleader {
             .send(Event::TextToSpeech(TextToSpeechAction::Speak {
                 text: text.to_string(),
                 prio: Priority::High,
-            }))
-            .unwrap();
+            }));
     }
 
     /// Convenience method for sending irc messages
     fn irc_say(&self, msg: &str) {
         self.bus
-            .send(Event::Irc(IrcAction::SendMsg(msg.to_string())))
-            .unwrap();
+            .send(Event::Irc(IrcAction::SendMsg(msg.to_string())));
     }
 
     /// Convenience method for (dis)allowing music playback
     fn allow_music_playback(&self, allow: bool) {
         if allow {
-            self.bus
-                .send(Event::Playback(PlaybackAction::Play))
-                .unwrap();
+            self.bus.send(Event::Playback(PlaybackAction::Play));
         } else {
-            self.bus
-                .send(Event::Playback(PlaybackAction::Pause))
-                .unwrap();
+            self.bus.send(Event::Playback(PlaybackAction::Pause));
         }
     }
 
@@ -264,12 +258,10 @@ impl Songleader {
     fn allow_low_prio_speech(&self, allow: bool) {
         if allow {
             self.bus
-                .send(Event::TextToSpeech(TextToSpeechAction::AllowLowPrio))
-                .unwrap();
+                .send(Event::TextToSpeech(TextToSpeechAction::AllowLowPrio));
         } else {
             self.bus
-                .send(Event::TextToSpeech(TextToSpeechAction::DisallowLowPrio))
-                .unwrap();
+                .send(Event::TextToSpeech(TextToSpeechAction::DisallowLowPrio));
         }
     }
 
@@ -452,7 +444,7 @@ fn handle_incoming_event_loop(bus: EventBus, songleader: Arc<RwLock<Songleader>>
         let mut bus_rx = bus.subscribe();
 
         loop {
-            let event = bus_rx.recv().await.unwrap();
+            let event = bus_rx.recv().await;
 
             if let Event::Songleader(action) = event {
                 let songleader = songleader.clone();
@@ -530,8 +522,7 @@ async fn handle_incoming_event(
             let bus = bus.clone();
             tokio::spawn(async move {
                 for line in HELP_TEXT.split('\n') {
-                    bus.send(Event::Irc(IrcAction::SendMsg(line.to_string())))
-                        .unwrap();
+                    bus.send(Event::Irc(IrcAction::SendMsg(line.to_string())));
                     sleep(ANTI_FLOOD_DELAY).await;
                 }
             });

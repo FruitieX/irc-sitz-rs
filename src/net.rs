@@ -7,11 +7,13 @@ use std::net::SocketAddr;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
+const LISTEN_ADDR: &str = "0.0.0.0:7878";
+
 pub fn init(source: MixerOutput) {
     tokio::spawn(async move {
-        // Create a TCP listener that binds to the local address 127.0.0.1:7878
-        let listener = TcpListener::bind("127.0.0.1:7878").await.unwrap();
-        info!("Listening on 127.0.0.1:7878");
+        // Create a TCP listener that binds to the configured address
+        let listener = TcpListener::bind(LISTEN_ADDR).await.unwrap();
+        info!("Listening on {LISTEN_ADDR}");
 
         loop {
             // Accept a connection and get the stream
@@ -60,8 +62,8 @@ async fn accept(listener: &TcpListener, source: &MixerOutput) -> Result<SocketAd
             let mut wav_data: Vec<u8> = Vec::with_capacity(samples.len() * 2);
 
             for (left, right) in samples {
-                WriteBytesExt::write_i16::<LittleEndian>(&mut wav_data, left).unwrap();
-                WriteBytesExt::write_i16::<LittleEndian>(&mut wav_data, right).unwrap();
+                WriteBytesExt::write_i16::<LittleEndian>(&mut wav_data, left).ok();
+                WriteBytesExt::write_i16::<LittleEndian>(&mut wav_data, right).ok();
             }
 
             if let Err(e) = stream.write_all(wav_data.as_slice()).await {

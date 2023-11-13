@@ -1,5 +1,5 @@
 use crate::{
-    bus::{Event, EventBus},
+    event::{Event, EventBus},
     irc::IrcAction,
     sources::symphonia::SymphoniaAction,
 };
@@ -112,8 +112,7 @@ impl Playback {
     /// Convenience method for sending irc messages
     fn irc_say(&self, msg: &str) {
         self.bus
-            .send(Event::Irc(IrcAction::SendMsg(msg.to_string())))
-            .unwrap();
+            .send(Event::Irc(IrcAction::SendMsg(msg.to_string())));
     }
 
     fn enqueue(&mut self, song: Song) {
@@ -153,11 +152,9 @@ impl Playback {
         self.state.is_playing = true;
         self.state.song_loaded = true;
 
-        self.bus
-            .send(Event::Symphonia(SymphoniaAction::PlayYtUrl {
-                url: song.url,
-            }))
-            .unwrap();
+        self.bus.send(Event::Symphonia(SymphoniaAction::PlayYtUrl {
+            url: song.url,
+        }));
 
         self.list_queue();
         self.state.persist();
@@ -218,7 +215,7 @@ fn handle_incoming_event_loop(bus: EventBus, playback: Arc<RwLock<Playback>>) {
         let mut bus_rx = bus.subscribe();
 
         loop {
-            let event = bus_rx.recv().await.unwrap();
+            let event = bus_rx.recv().await;
 
             if let Event::Playback(action) = event {
                 let playback = playback.clone();
@@ -242,10 +239,7 @@ async fn handle_incoming_event(action: PlaybackAction, playback: Arc<RwLock<Play
 
             if playback.state.song_loaded {
                 playback.state.is_playing = true;
-                playback
-                    .bus
-                    .send(Event::Symphonia(SymphoniaAction::Resume))
-                    .unwrap();
+                playback.bus.send(Event::Symphonia(SymphoniaAction::Resume));
             } else {
                 // Play next song if it exists
                 let song = playback.state.queued_songs.get(0).cloned();
@@ -260,10 +254,7 @@ async fn handle_incoming_event(action: PlaybackAction, playback: Arc<RwLock<Play
             playback.state.is_playing = false;
             playback.state.should_play = false;
 
-            playback
-                .bus
-                .send(Event::Symphonia(SymphoniaAction::Pause))
-                .unwrap();
+            playback.bus.send(Event::Symphonia(SymphoniaAction::Pause));
 
             playback.state.persist();
         }

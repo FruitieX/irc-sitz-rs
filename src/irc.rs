@@ -1,5 +1,5 @@
 use crate::{
-    bus::{Event, EventBus},
+    event::{Event, EventBus},
     playback::{PlaybackAction, MAX_SONG_DURATION},
     songleader::SongleaderAction,
     sources::espeak::{Priority, TextToSpeechAction},
@@ -47,7 +47,7 @@ pub async fn init(bus: &EventBus) -> Result<()> {
                     // Dispatch if msg resulted in action and msg is from target irc_channel
                     if let Some(action) = action {
                         if target == Some(irc_channel) {
-                            bus.send(action).unwrap();
+                            bus.send(action);
                         }
                     }
                 });
@@ -63,7 +63,7 @@ pub async fn init(bus: &EventBus) -> Result<()> {
             let mut bus = bus.subscribe();
 
             loop {
-                let event = bus.recv().await.unwrap();
+                let event = bus.recv().await;
 
                 if let Event::Irc(IrcAction::SendMsg(msg)) = event {
                     let result = irc_sender.send_privmsg(&irc_channel, &msg);
