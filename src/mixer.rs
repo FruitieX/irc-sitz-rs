@@ -1,6 +1,6 @@
 use crate::{
-    event::{Event, EventBus},
     constants::SAMPLE_RATE,
+    event::{Event, EventBus},
 };
 use anyhow::Result;
 use tokio::sync::{mpsc, watch};

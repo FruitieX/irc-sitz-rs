@@ -1,7 +1,7 @@
 use crate::{
     buffer::PlaybackBuffer,
-    event::{Event, EventBus},
     constants::SAMPLE_RATE,
+    event::{Event, EventBus},
     mixer::{MixerInput, Sample},
     playback::PlaybackAction,
     youtube::get_yt_media_source_stream,
