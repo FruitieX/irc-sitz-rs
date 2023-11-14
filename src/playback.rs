@@ -12,11 +12,18 @@ pub const MAX_SONG_DURATION: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Song {
+    pub id: String,
     pub url: String,
     pub title: String,
     pub channel: String,
     pub duration: u64,
     pub queued_by: String,
+}
+
+impl PartialEq for Song {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -129,22 +136,25 @@ impl Playback {
     }
 
     fn enqueue(&mut self, song: Song) {
-        let queue_was_empty = self.state.queued_songs.is_empty();
+        if self.state.queued_songs.contains(&song) {
+            self.irc_say("Song already in queue!");
+        } else {
+            let queue_was_empty = self.state.queued_songs.is_empty();
+            let time_until_playback = self.queue_duration_mins();
+            self.state.queued_songs.push(song.clone());
 
-        let time_until_playback = self.queue_duration_mins();
-        self.state.queued_songs.push(song.clone());
+            let msg = format!(
+                "Added {} to the queue. Time until playback: {} min",
+                song.title, time_until_playback
+            );
+            self.irc_say(&msg);
 
-        let msg = format!(
-            "Added {} to the queue. Time until playback: {} min",
-            song.title, time_until_playback
-        );
-        self.irc_say(&msg);
+            if !self.state.is_playing && self.state.should_play && queue_was_empty {
+                self.play_song(song)
+            }
 
-        if !self.state.is_playing && self.state.should_play && queue_was_empty {
-            self.play_song(song)
+            self.state.persist()
         }
-
-        self.state.persist()
     }
 
     fn list_queue(&self) {

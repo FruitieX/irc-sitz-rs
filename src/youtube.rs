@@ -64,6 +64,7 @@ pub async fn get_yt_song_info(url: String, queued_by: String) -> Result<Song> {
         .into_single_video();
 
     let video = output.context("No video found")?;
+    let id = video.id;
     let title = video.title.context("No title found in yt-dlp JSON!")?;
     let channel = video.channel.context("No channel found in yt-dlp JSON!")?;
     let duration = video
@@ -73,6 +74,7 @@ pub async fn get_yt_song_info(url: String, queued_by: String) -> Result<Song> {
         .context("Invalid duration in yt-dlp JSON")?;
 
     Ok(Song {
+        id,
         url,
         title,
         channel,
