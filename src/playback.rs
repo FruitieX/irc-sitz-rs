@@ -115,11 +115,29 @@ impl Playback {
             .send(Event::Irc(IrcAction::SendMsg(msg.to_string())));
     }
 
+    fn queue_len(&self) -> usize {
+        self.state.queued_songs.len()
+    }
+
+    fn queue_duration_mins(&self) -> u64 {
+        self.state
+            .queued_songs
+            .iter()
+            .map(|song| song.duration)
+            .sum::<u64>()
+            / 60
+    }
+
     fn enqueue(&mut self, song: Song) {
         let queue_was_empty = self.state.queued_songs.is_empty();
 
+        let time_until_playback = self.queue_duration_mins();
         self.state.queued_songs.push(song.clone());
-        let msg = format!("Added {} to the queue.", song.title);
+
+        let msg = format!(
+            "Added {} to the queue. Time until playback: {} min",
+            song.title, time_until_playback
+        );
         self.irc_say(&msg);
 
         if !self.state.is_playing && self.state.should_play && queue_was_empty {
@@ -138,11 +156,13 @@ impl Playback {
         let is_empty = self.state.queued_songs.is_empty();
         let np = fmt_song(self.state.queued_songs.get(0));
         let next = fmt_song(self.state.queued_songs.get(1));
+        let len = self.queue_len();
+        let duration_min = self.queue_duration_mins();
 
         let msg = if is_empty {
             "Queue is empty!".to_string()
         } else {
-            format!("Now playing: {}, next up: {}", np, next)
+            format!("Now playing: {np}, next up: {next}. Queue length: {len} ({duration_min} min)")
         };
 
         self.irc_say(&msg);
