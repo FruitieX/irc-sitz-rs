@@ -11,7 +11,6 @@ let
     ];
     targets = [
       "x86_64-unknown-linux-gnu"
-      "x86_64-unknown-linux-musl"
     ];
   };
 in
@@ -21,7 +20,6 @@ in
     buildInputs = [
       rustStableChannel
       python3
-
       pkg-config
     ];
     nativeBuildInputs = [
