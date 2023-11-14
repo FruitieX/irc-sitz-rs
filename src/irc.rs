@@ -102,8 +102,8 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                 match song {
                     Ok(song) if song.duration > MAX_SONG_DURATION.as_secs() => {
                         Some(Event::Irc(IrcAction::SendMsg(format!(
-                            "Requested song is too long! Max duration is {} seconds.",
-                            MAX_SONG_DURATION.as_secs()
+                            "Requested song is too long! Max duration is {} minutes.",
+                            MAX_SONG_DURATION.as_secs() / 60
                         ))))
                     }
                     Ok(song) => Some(Event::Playback(PlaybackAction::Enqueue { song })),
@@ -127,17 +127,18 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                     prio: Priority::Low,
                 }))
             }
-            "!request" => {
+            "!request" | "!req" | "!r" => {
                 let words: Vec<&str> = cmd_split.collect();
                 let song = words.join(" ");
 
                 Some(Event::Songleader(SongleaderAction::RequestSongUrl {
                     url: song,
+                    queued_by: nick,
                 }))
             }
-            "!tempo" => Some(Event::Songleader(SongleaderAction::Tempo { nick })),
-            "!bingo" => Some(Event::Songleader(SongleaderAction::Bingo { nick })),
-            "!skål" => Some(Event::Songleader(SongleaderAction::Skål)),
+            "!tempo" | "tempo" => Some(Event::Songleader(SongleaderAction::Tempo { nick })),
+            "!bingo" | "bingo" => Some(Event::Songleader(SongleaderAction::Bingo { nick })),
+            "!skål" | "skål" => Some(Event::Songleader(SongleaderAction::Skål)),
             "!ls" => Some(Event::Songleader(SongleaderAction::ListSongs)),
             "!help" => Some(Event::Songleader(SongleaderAction::Help)),
 
@@ -161,8 +162,9 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                                 url: None,
                                 title: Some(title.to_string()),
                                 book: None,
+                                queued_by: Some(nick),
                             };
-                            Some(Event::Songleader(SongleaderAction::RequestSong(song)))
+                            Some(Event::Songleader(SongleaderAction::RequestSong { song }))
                         }
                     }
                     "force-tempo-mode" | "resume" => {
@@ -176,8 +178,16 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                     "rm" => {
                         let id = cmd_split.next().map(|s| s.to_string());
 
+                        if id.is_none() {
+                            return Some(Event::Songleader(SongleaderAction::RmSongByNick {
+                                nick,
+                            }));
+                        }
+
                         match id {
-                            Some(id) => Some(Event::Songleader(SongleaderAction::RmSong { id })),
+                            Some(id) => {
+                                Some(Event::Songleader(SongleaderAction::RmSongById { id }))
+                            }
                             None => Some(Event::Irc(IrcAction::SendMsg(
                                 "Error: Missing song ID! Usage: !song rm <song ID>".to_string(),
                             ))),
@@ -197,15 +207,20 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                     "play" => Some(Event::Playback(PlaybackAction::Play)),
                     "pause" => Some(Event::Playback(PlaybackAction::Pause)),
                     "rm" => {
-                        let offset = cmd_split.next();
-                        let offset = offset.and_then(|offset| offset.parse().ok());
+                        let pos = cmd_split.next();
 
-                        match offset {
-                            Some(offset) => {
-                                Some(Event::Playback(PlaybackAction::RmSong { offset }))
-                            }
+                        if pos.is_none() {
+                            return Some(Event::Playback(PlaybackAction::RmSongByNick { nick }));
+                        }
+
+                        let pos = pos.and_then(|pos| pos.parse().ok());
+
+                        match pos {
+                            Some(pos) => Some(Event::Playback(PlaybackAction::RmSongByPos {
+                                pos
+                            })),
                             None => Some(Event::Irc(IrcAction::SendMsg(
-                                "Error: Missing offset! Usage: !music rm <offset>".to_string(),
+                                r#"Error: Invalid position! Usage: "!music rm" to remove most recently queued, or "!music rm <position>" to remove by position"#.to_string(),
                             ))),
                         }
                     }

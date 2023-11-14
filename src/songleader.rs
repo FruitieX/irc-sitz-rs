@@ -39,27 +39,23 @@ And the most important - to sing a song:  !tempo
 
 #[derive(Clone, Debug)]
 pub enum SongleaderAction {
-    /// Requests a song to be sung
-    RequestSongUrl {
-        url: String,
-    },
+    /// Requests a song to be sung from an URL
+    RequestSongUrl { url: String, queued_by: String },
 
-    RequestSong(SongbookSong),
+    /// Requests a song to be sung by name
+    RequestSong { song: SongbookSong },
 
     /// Removes a song by ID
-    RmSong {
-        id: String,
-    },
+    RmSongById { id: String },
+
+    /// Removes latest song queued by nick
+    RmSongByNick { nick: String },
 
     /// Advance to the next song faster
-    Tempo {
-        nick: String,
-    },
+    Tempo { nick: String },
 
     /// Ready to sing upcoming song
-    Bingo {
-        nick: String,
-    },
+    Bingo { nick: String },
 
     /// Song is finished
     Skål,
@@ -194,12 +190,24 @@ impl SongleaderState {
         Ok(song)
     }
 
-    fn rm_song(&mut self, id: String) -> Result<SongbookSong> {
+    fn rm_song_by_id(&mut self, id: String) -> Result<SongbookSong> {
         let index = self
             .requests
             .iter()
             .position(|song| song.id == id)
-            .ok_or_else(|| anyhow!("Song not found"))?;
+            .ok_or_else(|| anyhow!("Song not found by id {id}"))?;
+
+        let song = self.requests.remove(index);
+
+        Ok(song)
+    }
+
+    fn rm_song_by_nick(&mut self, nick: String) -> Result<SongbookSong> {
+        let index = self
+            .requests
+            .iter()
+            .rposition(|song| song.queued_by == Some(nick.clone()))
+            .ok_or_else(|| anyhow!("You have no songs in the request queue, {nick}"))?;
 
         let song = self.requests.remove(index);
 
@@ -325,6 +333,7 @@ impl Songleader {
                 id,
                 title: Some(title.to_string()),
                 book: Some(format!("TF:s Sångbok 150 – s. {page}")),
+                queued_by: None,
             }
         };
 
@@ -525,11 +534,11 @@ async fn handle_incoming_event(
     let mut songleader = songleader_rwlock.write().await;
 
     match action {
-        SongleaderAction::RequestSongUrl { url } => {
+        SongleaderAction::RequestSongUrl { url, queued_by } => {
             // Don't hold onto the lock while fetching song info
             drop(songleader);
 
-            let song = songbook::get_song_info(&url, &config).await;
+            let song = songbook::get_song_info(&url, &config, &queued_by).await;
 
             let mut songleader = songleader_rwlock.write().await;
             let result = song.and_then(|song| songleader.state.add_request(song));
@@ -540,7 +549,7 @@ async fn handle_incoming_event(
             }
         }
 
-        SongleaderAction::RequestSong(song) => {
+        SongleaderAction::RequestSong { song } => {
             let result = songleader.state.add_request(song);
 
             match result {
@@ -549,8 +558,17 @@ async fn handle_incoming_event(
             }
         }
 
-        SongleaderAction::RmSong { id } => {
-            let result = songleader.state.rm_song(id);
+        SongleaderAction::RmSongById { id } => {
+            let result = songleader.state.rm_song_by_id(id);
+
+            match result {
+                Ok(song) => songleader.irc_say(&format!("Removed {song} from requests")),
+                Err(e) => songleader.irc_say(&format!("Error while removing song: {:?}", e)),
+            }
+        }
+
+        SongleaderAction::RmSongByNick { nick } => {
+            let result = songleader.state.rm_song_by_nick(nick);
 
             match result {
                 Ok(song) => songleader.irc_say(&format!("Removed {song} from requests")),

@@ -12,6 +12,7 @@ pub struct SongbookSong {
     pub url: Option<String>,
     pub title: Option<String>,
     pub book: Option<String>,
+    pub queued_by: Option<String>,
 }
 
 impl PartialEq for SongbookSong {
@@ -33,7 +34,7 @@ impl Display for SongbookSong {
     }
 }
 
-pub async fn get_song_info(url: &str, config: &Config) -> Result<SongbookSong> {
+pub async fn get_song_info(url: &str, config: &Config, queued_by: &str) -> Result<SongbookSong> {
     let url_matches = config.songbook.songbook_re.captures(url).with_context(|| {
         format!(
             "URL mismatch, try pasting a URL from {}",
@@ -77,5 +78,6 @@ pub async fn get_song_info(url: &str, config: &Config) -> Result<SongbookSong> {
         id,
         title,
         book,
+        queued_by: Some(queued_by.to_string()),
     })
 }

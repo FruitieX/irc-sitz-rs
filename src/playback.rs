@@ -28,13 +28,31 @@ impl PartialEq for Song {
 
 #[derive(Clone, Debug)]
 pub enum PlaybackAction {
+    /// Add song at the end of the queue
     Enqueue { song: Song },
+
+    /// Player reached end of song
     EndOfSong,
+
+    /// List either the first items in a queue or an item at a specific position
     ListQueue { offset: Option<usize> },
-    RmSong { offset: usize },
+
+    /// Removes song by position
+    RmSongByPos { pos: usize },
+
+    /// Removes latest song queued by nick
+    RmSongByNick { nick: String },
+
+    /// Resumes playback
     Play,
+
+    /// Pauses playback
     Pause,
+
+    /// Play previous song
     Prev,
+
+    /// Play next song
     Next,
 }
 
@@ -182,7 +200,7 @@ impl Playback {
         self.irc_say(&msg);
     }
 
-    fn rm_song(&mut self, pos: usize) {
+    fn rm_song_at_pos(&mut self, pos: usize) {
         let song = if pos == 0 {
             let song = self.state.queued_songs.get(0).cloned();
             self.next(true);
@@ -196,6 +214,25 @@ impl Playback {
         match song {
             Some(song) => self.irc_say(&format!("Removed song {} from the queue", song.title)),
             None => self.irc_say(&format!("No song at position {pos} in the queue")),
+        }
+    }
+
+    fn rm_latest_song_by_nick(&mut self, nick: String) {
+        let index = self
+            .state
+            .queued_songs
+            .iter()
+            .rposition(|song| song.queued_by == nick);
+
+        let song = if let Some(index) = index {
+            Some(self.state.queued_songs.remove(index))
+        } else {
+            None
+        };
+
+        match song {
+            Some(song) => self.irc_say(&format!("Removed song {} from the queue", song.title)),
+            None => self.irc_say(&format!("You have no songs in the queue, {nick}")),
         }
     }
 
@@ -213,12 +250,6 @@ impl Playback {
 
     fn end_of_queue(&mut self) {
         self.state.is_playing = false;
-
-        // dispatch_app_action(
-        //     &self.bus,
-        //     AppAction::ControlClient(WsMessageFromServer::Pause),
-        // );
-
         self.irc_say("Playback queue ended.");
         self.state.persist()
     }
@@ -288,9 +319,8 @@ async fn handle_incoming_event(action: PlaybackAction, playback: Arc<RwLock<Play
         PlaybackAction::ListQueue { offset } => {
             playback.list_queue(offset);
         }
-        PlaybackAction::RmSong { offset } => {
-            playback.rm_song(offset);
-        }
+        PlaybackAction::RmSongByPos { pos } => playback.rm_song_at_pos(pos),
+        PlaybackAction::RmSongByNick { nick } => playback.rm_latest_song_by_nick(nick),
         PlaybackAction::Play => {
             playback.state.should_play = true;
 
