@@ -40,13 +40,21 @@ And the most important - to sing a song:  !tempo
 #[derive(Clone, Debug)]
 pub enum SongleaderAction {
     /// Requests a song to be sung
-    RequestSong { url: String },
+    RequestSongUrl {
+        url: String,
+    },
+
+    RequestSong(SongbookSong),
 
     /// Advance to the next song faster
-    Tempo { nick: String },
+    Tempo {
+        nick: String,
+    },
 
     /// Ready to sing upcoming song
-    Bingo { nick: String },
+    Bingo {
+        nick: String,
+    },
 
     /// Song is finished
     Skål,
@@ -296,7 +304,7 @@ impl Songleader {
             let songbook_url = &self.config.songbook.songbook_url;
 
             SongbookSong {
-                url: format!("{songbook_url}/{id}"),
+                url: Some(format!("{songbook_url}/{id}")),
                 id,
                 title: Some(title.to_string()),
                 book: Some(format!("TF:s Sångbok 150 – s. {page}")),
@@ -399,7 +407,13 @@ Have fun, and don't drown in the shower!
                 self.allow_music_playback(false);
 
                 self.tts_say(&format!("Nästa sång kommer nu... {song}"));
-                self.irc_say(&format!("Next song coming up: {song}. {}", song.url));
+
+                if let Some(url) = &song.url {
+                    self.irc_say(&format!("Next song coming up: {song}. {}", url));
+                } else {
+                    self.irc_say(&format!("Next song coming up: {song}"));
+                }
+
                 self.irc_say("Type !bingo when you have found it!")
             }
             None => {
@@ -494,7 +508,7 @@ async fn handle_incoming_event(
     let mut songleader = songleader_rwlock.write().await;
 
     match action {
-        SongleaderAction::RequestSong { url } => {
+        SongleaderAction::RequestSongUrl { url } => {
             // Don't hold onto the lock while fetching song info
             drop(songleader);
 
@@ -502,6 +516,15 @@ async fn handle_incoming_event(
 
             let mut songleader = songleader_rwlock.write().await;
             let result = song.and_then(|song| songleader.state.add_request(song));
+
+            match result {
+                Ok(song) => songleader.irc_say(&format!("Added {song} to requests")),
+                Err(e) => songleader.irc_say(&format!("Error while requesting song: {:?}", e)),
+            }
+        }
+
+        SongleaderAction::RequestSong(song) => {
+            let result = songleader.state.add_request(song);
 
             match result {
                 Ok(song) => songleader.irc_say(&format!("Added {song} to requests")),

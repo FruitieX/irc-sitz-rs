@@ -1,6 +1,7 @@
 use crate::{
     event::{Event, EventBus},
     playback::{PlaybackAction, MAX_SONG_DURATION},
+    songbook::SongbookSong,
     songleader::SongleaderAction,
     sources::espeak::{Priority, TextToSpeechAction},
     youtube::get_yt_song_info,
@@ -124,7 +125,7 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                 let words: Vec<&str> = cmd_split.collect();
                 let song = words.join(" ");
 
-                Some(Event::Songleader(SongleaderAction::RequestSong {
+                Some(Event::Songleader(SongleaderAction::RequestSongUrl {
                     url: song,
                 }))
             }
@@ -139,6 +140,25 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                 let subcommand = cmd_split.next()?;
 
                 match subcommand {
+                    "force-request" => {
+                        let title: Vec<&str> = cmd_split.collect();
+                        let title = title.join(" ");
+
+                        if title.is_empty() {
+                            Some(Event::Irc(IrcAction::SendMsg(
+                                "Error: Missing song name! Usage: !song force-request <song name>"
+                                    .to_string(),
+                            )))
+                        } else {
+                            let song = SongbookSong {
+                                id: title.to_string(),
+                                url: None,
+                                title: Some(title.to_string()),
+                                book: None,
+                            };
+                            Some(Event::Songleader(SongleaderAction::RequestSong(song)))
+                        }
+                    }
                     "force-tempo-mode" | "resume" => {
                         Some(Event::Songleader(SongleaderAction::ForceTempo))
                     }

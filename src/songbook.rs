@@ -8,8 +8,8 @@ use crate::config::Config;
 
 #[derive(Clone, Default, Debug, Deserialize, Serialize)]
 pub struct SongbookSong {
-    pub url: String,
     pub id: String,
+    pub url: Option<String>,
     pub title: Option<String>,
     pub book: Option<String>,
 }
@@ -73,7 +73,7 @@ pub async fn get_song_info(url: &str, config: &Config) -> Result<SongbookSong> {
         .map(|text| text.to_string());
 
     Ok(SongbookSong {
-        url: url.to_string(),
+        url: Some(url.to_string()),
         id,
         title,
         book,
