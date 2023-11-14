@@ -1,7 +1,9 @@
 use crate::{
+    config::Config,
     event::{Event, EventBus},
     irc::IrcAction,
     playback::PlaybackAction,
+    songbook::{self, SongbookSong},
     sources::espeak::{Priority, TextToSpeechAction},
 };
 use anyhow::{anyhow, Result};
@@ -27,7 +29,7 @@ const TEMPO_DEADLINE: Duration = Duration::from_secs(300);
 const HELP_TEXT: &str = r#"
 ===================================================================
 Useful commands:
-Add a song you want to sing:              !request <songname, page>
+Add a song you want to sing:              !request <url>
 List current requests:                    !ls
 And to say stuff, use:                    !speak <text>
 Add a YouTube url to the music queue:     !p <url>
@@ -38,7 +40,7 @@ And the most important - to sing a song:  !tempo
 #[derive(Clone, Debug)]
 pub enum SongleaderAction {
     /// Requests a song to be sung
-    RequestSong { song: Song },
+    RequestSong { url: String },
 
     /// Advance to the next song faster
     Tempo { nick: String },
@@ -74,8 +76,6 @@ pub enum SongleaderAction {
     Help,
 }
 
-pub type Song = String;
-
 #[derive(Default, Debug, Deserialize, Serialize, PartialEq)]
 pub enum Mode {
     /// Songleader is inactive. Effectively pauses the songleader.
@@ -104,7 +104,7 @@ pub enum Mode {
         nicks: HashSet<String>,
 
         /// Song that is about to be sung
-        song: Song,
+        song: SongbookSong,
     },
 
     /// Songleader is waiting for song to end by anybody typing "!skål".
@@ -114,13 +114,13 @@ pub enum Mode {
 #[derive(Default, Debug, Deserialize, Serialize)]
 pub struct SongleaderState {
     /// List of songs that the songleader will sing first
-    first_songs: VecDeque<Song>,
+    first_songs: VecDeque<SongbookSong>,
 
     /// List of all song requests
-    requests: Vec<Song>,
+    requests: Vec<SongbookSong>,
 
     /// List of backup songs in case the requests run out
-    backup: Vec<Song>,
+    backup: Vec<SongbookSong>,
 
     /// Current mode of the songleader
     mode: Mode,
@@ -158,7 +158,7 @@ impl SongleaderState {
         }
     }
 
-    pub fn get_songs(&self) -> Vec<Song> {
+    pub fn get_songs(&self) -> Vec<SongbookSong> {
         let mut songs = Vec::new();
 
         songs.extend(self.first_songs.clone());
@@ -168,20 +168,20 @@ impl SongleaderState {
         songs
     }
 
-    fn add_request(&mut self, song: &Song) -> Result<()> {
+    fn add_request(&mut self, song: SongbookSong) -> Result<SongbookSong> {
         let songs = self.get_songs();
 
-        if songs.contains(song) {
+        if songs.contains(&song) {
             return Err(anyhow!("Song already requested"));
         }
 
         self.requests.push(song.clone());
         self.persist();
 
-        Ok(())
+        Ok(song)
     }
 
-    pub fn pop_next_song(&mut self) -> Option<Song> {
+    pub fn pop_next_song(&mut self) -> Option<SongbookSong> {
         if let Some(song) = self.first_songs.pop_front() {
             return Some(song);
         }
@@ -206,11 +206,13 @@ pub struct Songleader {
 
     /// Send and receive events to/from the rest of the app
     bus: EventBus,
+
+    config: Config,
 }
 
 impl Songleader {
     /// Creates a new [Songleader] struct
-    pub async fn create(bus: &EventBus) -> Self {
+    pub async fn create(bus: &EventBus, config: &Config) -> Self {
         let state = SongleaderState::read_or_default().await;
 
         debug!("Initial songleader state:\n{:#?}", state);
@@ -218,6 +220,7 @@ impl Songleader {
         Self {
             state,
             bus: bus.clone(),
+            config: config.clone(),
         }
     }
 
@@ -288,21 +291,32 @@ impl Songleader {
         self.allow_music_playback(false);
         self.allow_low_prio_speech(false);
 
+        let mk_songbook_song = |title: &str, id: &str, page: usize| SongbookSong {
+            url: format!("{}/{id}", self.config.songbook.songbook_url),
+            id: id.to_string(),
+            title: Some(title.to_string()),
+            book: Some(format!("TF:s Sångbok 150 – s. {page}")),
+        };
+
         self.state.first_songs = vec![
-            "Halvankaren - s, 32".to_string(),
-            "Fjärran han dröjer - s, 35".to_string(),
+            mk_songbook_song("Halvankaren", "tf-sangbok-150-halvankaren", 39),
+            mk_songbook_song(
+                "Fjärran han dröjer",
+                "tf-sangbok-150-fjarran-han-drojer",
+                45,
+            ),
         ]
         .into();
 
         self.state.requests = vec![];
         self.state.backup = vec![
-            "Rattataa - s, 43".to_string(),
-            "Nu är det nu - s, 91".to_string(),
-            "Mera brännvin(Internationalen) - s. 62".to_string(),
-            "Tycker du som jag - s, 63".to_string(),
-            "Siffervisan - s, 114".to_string(),
-            "Vad i allsindar - s, 115".to_string(),
-            "Undulaten - s, 45".to_string(),
+            mk_songbook_song("Rattataa", "tf-sangbok-150-rattataa", 0),
+            mk_songbook_song("Nu är det nu", "tf-sangbok-150-nu-ar-det-nu", 125),
+            mk_songbook_song("Mera brännvin", "tf-sangbok-150-mera-brannvin", 83),
+            mk_songbook_song("Tycker du som jag", "tf-sangbok-150-tycker-du-som-jag", 79),
+            mk_songbook_song("Siffervisan", "tf-sangbok-150-siffervisan", 115),
+            mk_songbook_song("Vad i allsin dar?", "tf-sangbok-150-vad-i-allsin-dar", 54),
+            mk_songbook_song("Undulaten", "tf-sangbok-150-undulaten", 72),
         ];
 
         self.tts_say("Diii duuuu diii duuuu diii duuu");
@@ -373,12 +387,11 @@ Have fun, and don't drown in the shower!
                 self.allow_music_playback(false);
 
                 self.tts_say(&format!("Nästa sång kommer nu... {song}"));
-                self.irc_say(&format!(
-                    "Next song coming up: {song}. Type !bingo when you have found it!"
-                ));
+                self.irc_say(&format!("Next song coming up: {song}. {}", song.url));
+                self.irc_say("Type !bingo when you have found it!")
             }
             None => {
-                self.irc_say("No songs found :(, add more songs: !request songname, page number");
+                self.irc_say("No songs found :(, add more songs: !request <url>");
                 self.enter_tempo_mode();
             }
         }
@@ -412,10 +425,10 @@ Have fun, and don't drown in the shower!
     }
 }
 
-pub async fn init(bus: &EventBus) {
-    let songleader = Arc::new(RwLock::new(Songleader::create(bus).await));
+pub async fn init(bus: &EventBus, config: &Config) {
+    let songleader = Arc::new(RwLock::new(Songleader::create(bus, config).await));
 
-    handle_incoming_event_loop(bus.clone(), songleader.clone());
+    handle_incoming_event_loop(bus.clone(), config.clone(), songleader.clone());
     check_tempo_timeout_loop(songleader.clone());
 }
 
@@ -439,7 +452,7 @@ fn check_tempo_timeout_loop(songleader: Arc<RwLock<Songleader>>) {
 }
 
 /// Loop over incoming events on the bus
-fn handle_incoming_event_loop(bus: EventBus, songleader: Arc<RwLock<Songleader>>) {
+fn handle_incoming_event_loop(bus: EventBus, config: Config, songleader: Arc<RwLock<Songleader>>) {
     tokio::spawn(async move {
         let mut bus_rx = bus.subscribe();
 
@@ -449,9 +462,10 @@ fn handle_incoming_event_loop(bus: EventBus, songleader: Arc<RwLock<Songleader>>
             if let Event::Songleader(action) = event {
                 let songleader = songleader.clone();
                 let bus = bus.clone();
+                let config = config.clone();
 
                 tokio::spawn(async move {
-                    handle_incoming_event(bus, songleader, action).await;
+                    handle_incoming_event(bus, config, songleader, action).await;
                 });
             }
         }
@@ -461,17 +475,25 @@ fn handle_incoming_event_loop(bus: EventBus, songleader: Arc<RwLock<Songleader>>
 /// Decide what to do based on the incoming event
 async fn handle_incoming_event(
     bus: EventBus,
-    songleader: Arc<RwLock<Songleader>>,
+    config: Config,
+    songleader_rwlock: Arc<RwLock<Songleader>>,
     action: SongleaderAction,
 ) {
-    let mut songleader = songleader.write().await;
+    let mut songleader = songleader_rwlock.write().await;
 
     match action {
-        SongleaderAction::RequestSong { song } => {
-            let result = songleader.state.add_request(&song);
+        SongleaderAction::RequestSong { url } => {
+            // Don't hold onto the lock while fetching song info
+            drop(songleader);
+
+            let song = songbook::get_song_info(&url, &config).await;
+
+            let mut songleader = songleader_rwlock.write().await;
+            let result = song.and_then(|song| songleader.state.add_request(song));
+
             match result {
-                Ok(_) => songleader.irc_say(&format!("Added {song} to requests")),
-                Err(e) => songleader.irc_say(&format!("Error: {:?}", e)),
+                Ok(song) => songleader.irc_say(&format!("Added {song} to requests")),
+                Err(e) => songleader.irc_say(&format!("Error while requesting song: {:?}", e)),
             }
         }
 
@@ -505,7 +527,8 @@ async fn handle_incoming_event(
             let msg = if songs.is_empty() {
                 "No requested songs found :(".to_string()
             } else {
-                format!("Song requests: {}", songs.join(", "))
+                let songs_str: Vec<String> = songs.iter().map(|song| song.to_string()).collect();
+                format!("Song requests: {}", songs_str.join(", "))
             };
             songleader.irc_say(&msg);
         }

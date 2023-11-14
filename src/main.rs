@@ -2,12 +2,14 @@
 extern crate log;
 
 mod buffer;
-mod event;
+mod config;
 mod constants;
+mod event;
 mod irc;
 mod mixer;
 mod net;
 mod playback;
+mod songbook;
 mod songleader;
 mod sources;
 mod stdin;
@@ -17,6 +19,7 @@ mod youtube;
 async fn main() -> anyhow::Result<()> {
     pretty_env_logger::init();
 
+    let config = config::load().await?;
     let bus = event::EventBus::new();
 
     // let sine_source1 = sources::sine::init(440.0);
@@ -36,8 +39,8 @@ async fn main() -> anyhow::Result<()> {
 
     youtube::init().await?;
     playback::init(&bus).await;
-    irc::init(&bus).await?;
-    songleader::init(&bus).await;
+    irc::init(&bus, &config).await?;
+    songleader::init(&bus, &config).await;
     net::init(mixer_output);
     event::debug(&bus);
 

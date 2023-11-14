@@ -5,7 +5,7 @@ use crate::{
     sources::espeak::{Priority, TextToSpeechAction},
     youtube::get_yt_song_info,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures::StreamExt;
 use irc::client::prelude::*;
 
@@ -14,14 +14,17 @@ pub enum IrcAction {
     SendMsg(String),
 }
 
-pub async fn init(bus: &EventBus) -> Result<()> {
-    let config = Config::load("Config.toml")?;
-    let irc_channel = config
-        .channels
-        .first()
-        .context("Expected channels config to be nonempty")?
-        .clone();
-    let mut client = Client::from_config(config).await?;
+pub async fn init(bus: &EventBus, config: &crate::config::Config) -> Result<()> {
+    let irc_config = Config {
+        nickname: Some(config.irc.nickname.clone()),
+        server: Some(config.irc.server.clone()),
+        channels: vec![config.irc.channel.clone()],
+        ..Default::default()
+    };
+
+    let irc_channel = config.irc.channel.clone();
+
+    let mut client = Client::from_config(irc_config).await?;
 
     let irc_sender = client.sender();
 
@@ -121,7 +124,9 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                 let words: Vec<&str> = cmd_split.collect();
                 let song = words.join(" ");
 
-                Some(Event::Songleader(SongleaderAction::RequestSong { song }))
+                Some(Event::Songleader(SongleaderAction::RequestSong {
+                    url: song,
+                }))
             }
             "!tempo" => Some(Event::Songleader(SongleaderAction::Tempo { nick })),
             "!bingo" => Some(Event::Songleader(SongleaderAction::Bingo { nick })),
