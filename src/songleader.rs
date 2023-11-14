@@ -46,6 +46,11 @@ pub enum SongleaderAction {
 
     RequestSong(SongbookSong),
 
+    /// Removes a song by ID
+    RmSong {
+        id: String,
+    },
+
     /// Advance to the next song faster
     Tempo {
         nick: String,
@@ -185,6 +190,18 @@ impl SongleaderState {
 
         self.requests.push(song.clone());
         self.persist();
+
+        Ok(song)
+    }
+
+    fn rm_song(&mut self, id: String) -> Result<SongbookSong> {
+        let index = self
+            .requests
+            .iter()
+            .position(|song| song.id == id)
+            .ok_or_else(|| anyhow!("Song not found"))?;
+
+        let song = self.requests.remove(index);
 
         Ok(song)
     }
@@ -529,6 +546,15 @@ async fn handle_incoming_event(
             match result {
                 Ok(song) => songleader.irc_say(&format!("Added {song} to requests")),
                 Err(e) => songleader.irc_say(&format!("Error while requesting song: {:?}", e)),
+            }
+        }
+
+        SongleaderAction::RmSong { id } => {
+            let result = songleader.state.rm_song(id);
+
+            match result {
+                Ok(song) => songleader.irc_say(&format!("Removed {song} from requests")),
+                Err(e) => songleader.irc_say(&format!("Error while removing song: {:?}", e)),
             }
         }
 

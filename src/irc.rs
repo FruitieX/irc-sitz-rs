@@ -95,8 +95,9 @@ async fn message_to_action(message: &Message) -> Option<Event> {
 
         match cmd {
             "!p" => {
-                let url = cmd_split.next()?;
-                let song = get_yt_song_info(url.to_string(), nick).await;
+                let words: Vec<&str> = cmd_split.collect();
+                let url_or_search_terms = words.join(" ");
+                let song = get_yt_song_info(url_or_search_terms.to_string(), nick).await;
 
                 match song {
                     Ok(song) if song.duration > MAX_SONG_DURATION.as_secs() => {
@@ -107,11 +108,16 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                     }
                     Ok(song) => Some(Event::Playback(PlaybackAction::Enqueue { song })),
                     Err(e) => Some(Event::Irc(IrcAction::SendMsg(format!(
-                        "Error while getting song info {e}"
+                        "Error while getting song info: {e}"
                     )))),
                 }
             }
-            "!q" => Some(Event::Playback(PlaybackAction::ListQueue)),
+            "!q" => {
+                let offset = cmd_split.next();
+                let offset = offset.and_then(|offset| offset.parse().ok());
+
+                Some(Event::Playback(PlaybackAction::ListQueue { offset }))
+            }
             "!speak" => {
                 let words: Vec<&str> = cmd_split.collect();
                 let text = words.join(" ");
@@ -167,6 +173,16 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                     "pause" => Some(Event::Songleader(SongleaderAction::Pause)),
                     "end" => Some(Event::Songleader(SongleaderAction::End)),
                     "begin" => Some(Event::Songleader(SongleaderAction::Begin)),
+                    "rm" => {
+                        let id = cmd_split.next().map(|s| s.to_string());
+
+                        match id {
+                            Some(id) => Some(Event::Songleader(SongleaderAction::RmSong { id })),
+                            None => Some(Event::Irc(IrcAction::SendMsg(
+                                "Error: Missing song ID! Usage: !song rm <song ID>".to_string(),
+                            ))),
+                        }
+                    }
                     _ => None,
                 }
             }
@@ -180,6 +196,19 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                     "prev" => Some(Event::Playback(PlaybackAction::Prev)),
                     "play" => Some(Event::Playback(PlaybackAction::Play)),
                     "pause" => Some(Event::Playback(PlaybackAction::Pause)),
+                    "rm" => {
+                        let offset = cmd_split.next();
+                        let offset = offset.and_then(|offset| offset.parse().ok());
+
+                        match offset {
+                            Some(offset) => {
+                                Some(Event::Playback(PlaybackAction::RmSong { offset }))
+                            }
+                            None => Some(Event::Irc(IrcAction::SendMsg(
+                                "Error: Missing offset! Usage: !music rm <offset>".to_string(),
+                            ))),
+                        }
+                    }
                     _ => None,
                 }
             }

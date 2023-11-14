@@ -53,18 +53,27 @@ pub async fn get_yt_media_source_stream(url: String) -> Result<MediaSourceStream
     Ok(MediaSourceStream::new(source, Default::default()))
 }
 
-pub async fn get_yt_song_info(url: String, queued_by: String) -> Result<Song> {
-    let output = YoutubeDl::new(url.clone())
+pub async fn get_yt_song_info(url_or_search_terms: String, queued_by: String) -> Result<Song> {
+    let output = YoutubeDl::new(url_or_search_terms.clone())
         .youtube_dl_path("./yt-dlp")
         .extract_audio(true)
         // until symphonia has opus support
         .format("bestaudio[ext=m4a]")
+        .extra_arg("--default-search")
+        .extra_arg("ytsearch")
         .run_async()
-        .await?
-        .into_single_video();
+        .await?;
 
-    let video = output.context("No video found")?;
+    let single_video = output.clone().into_single_video();
+    let first_match = single_video.or_else(|| {
+        let playlist = output.into_playlist()?;
+        let entries = playlist.entries?;
+        entries.first().cloned()
+    });
+
+    let video = first_match.context("No video found")?;
     let id = video.id;
+    let url = format!("https://youtu.be/{}", id);
     let title = video.title.context("No title found in yt-dlp JSON!")?;
     let channel = video.channel.context("No channel found in yt-dlp JSON!")?;
     let duration = video

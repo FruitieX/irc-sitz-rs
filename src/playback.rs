@@ -30,7 +30,8 @@ impl PartialEq for Song {
 pub enum PlaybackAction {
     Enqueue { song: Song },
     EndOfSong,
-    ListQueue,
+    ListQueue { offset: Option<usize> },
+    RmSong { offset: usize },
     Play,
     Pause,
     Prev,
@@ -157,9 +158,9 @@ impl Playback {
         }
     }
 
-    fn list_queue(&self) {
+    fn list_queue(&self, offset: Option<usize>) {
         let fmt_song = |song: Option<&Song>| {
-            song.map(|song| format!("{} (queued by {})", song.url, song.queued_by))
+            song.map(|song| format!("{} (queued by {})", song.title, song.queued_by))
                 .unwrap_or_else(|| "(nothing)".to_string())
         };
 
@@ -171,11 +172,31 @@ impl Playback {
 
         let msg = if is_empty {
             "Queue is empty!".to_string()
+        } else if let Some(offset) = offset {
+            let song = fmt_song(self.state.queued_songs.get(offset));
+            format!("Song at position {offset}: {song}")
         } else {
             format!("Now playing: {np}, next up: {next}. Queue length: {len} ({duration_min} min)")
         };
 
         self.irc_say(&msg);
+    }
+
+    fn rm_song(&mut self, pos: usize) {
+        let song = if pos == 0 {
+            let song = self.state.queued_songs.get(0).cloned();
+            self.next(true);
+            song
+        } else if pos < self.state.queued_songs.len() {
+            Some(self.state.queued_songs.remove(pos))
+        } else {
+            None
+        };
+
+        match song {
+            Some(song) => self.irc_say(&format!("Removed song {} from the queue", song.title)),
+            None => self.irc_say(&format!("No song at position {pos} in the queue")),
+        }
     }
 
     fn play_song(&mut self, song: Song) {
@@ -186,7 +207,7 @@ impl Playback {
             url: song.url,
         }));
 
-        self.list_queue();
+        self.list_queue(None);
         self.state.persist();
     }
 
@@ -202,11 +223,14 @@ impl Playback {
         self.state.persist()
     }
 
-    fn next(&mut self) {
+    fn next(&mut self, remove_current: bool) {
         if !self.state.queued_songs.is_empty() {
             // Move now playing song to played_songs
             let song = self.state.queued_songs.remove(0);
-            self.state.played_songs.push(song);
+
+            if !remove_current {
+                self.state.played_songs.push(song);
+            }
         }
 
         if self.state.queued_songs.is_empty() {
@@ -261,8 +285,11 @@ async fn handle_incoming_event(action: PlaybackAction, playback: Arc<RwLock<Play
     let mut playback = playback.write().await;
     match action {
         PlaybackAction::Enqueue { song } => playback.enqueue(song),
-        PlaybackAction::ListQueue => {
-            playback.list_queue();
+        PlaybackAction::ListQueue { offset } => {
+            playback.list_queue(offset);
+        }
+        PlaybackAction::RmSong { offset } => {
+            playback.rm_song(offset);
         }
         PlaybackAction::Play => {
             playback.state.should_play = true;
@@ -291,10 +318,10 @@ async fn handle_incoming_event(action: PlaybackAction, playback: Arc<RwLock<Play
         PlaybackAction::EndOfSong => {
             playback.state.is_playing = false;
             playback.state.song_loaded = false;
-            playback.next();
+            playback.next(false);
         }
         PlaybackAction::Next => {
-            playback.next();
+            playback.next(false);
         }
         PlaybackAction::Prev => {
             playback.prev();
