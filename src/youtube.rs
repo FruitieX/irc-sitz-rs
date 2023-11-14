@@ -61,6 +61,7 @@ pub async fn get_yt_song_info(url_or_search_terms: String, queued_by: String) ->
         .format("bestaudio[ext=m4a]")
         .extra_arg("--default-search")
         .extra_arg("ytsearch")
+        .extra_arg("--no-playlist")
         .run_async()
         .await?;
 

@@ -192,7 +192,7 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                 let subcommand = cmd_split.next()?;
 
                 match subcommand {
-                    "next" => Some(Event::Playback(PlaybackAction::Next)),
+                    "next" | "skip" => Some(Event::Playback(PlaybackAction::Next)),
                     "prev" => Some(Event::Playback(PlaybackAction::Prev)),
                     "play" => Some(Event::Playback(PlaybackAction::Play)),
                     "pause" => Some(Event::Playback(PlaybackAction::Pause)),
