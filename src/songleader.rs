@@ -29,7 +29,7 @@ const TEMPO_DEADLINE: Duration = Duration::from_secs(300);
 const HELP_TEXT: &str = r#"
 ===================================================================
 Useful commands:
-Add a song you want to sing:              !request <url>
+Add a song you want to sing:              !request songbook-url
 List current requests:                    !ls
 And to say stuff, use:                    !speak <text>
 Add a YouTube url to the music queue:     !p <url>
@@ -291,43 +291,55 @@ impl Songleader {
         self.allow_music_playback(false);
         self.allow_low_prio_speech(false);
 
-        let mk_songbook_song = |title: &str, id: &str, page: usize| SongbookSong {
-            url: format!("{}/{id}", self.config.songbook.songbook_url),
-            id: id.to_string(),
-            title: Some(title.to_string()),
-            book: Some(format!("TF:s Sångbok 150 – s. {page}")),
+        let mk_songbook_song = |title: &str, id: &str, page: usize| {
+            let id = format!("tf-sangbok-150-{}", id);
+            let songbook_url = &self.config.songbook.songbook_url;
+
+            SongbookSong {
+                url: format!("{songbook_url}/{id}"),
+                id,
+                title: Some(title.to_string()),
+                book: Some(format!("TF:s Sångbok 150 – s. {page}")),
+            }
         };
 
         self.state.first_songs = vec![
-            mk_songbook_song("Halvankaren", "tf-sangbok-150-halvankaren", 39),
-            mk_songbook_song(
-                "Fjärran han dröjer",
-                "tf-sangbok-150-fjarran-han-drojer",
-                45,
-            ),
+            mk_songbook_song("Halvankaren", "halvankaren", 39),
+            mk_songbook_song("Fjärran han dröjer", "fjarran-han-drojer", 45),
         ]
         .into();
 
         self.state.requests = vec![];
+
         self.state.backup = vec![
-            mk_songbook_song("Rattataa", "tf-sangbok-150-rattataa", 0),
-            mk_songbook_song("Nu är det nu", "tf-sangbok-150-nu-ar-det-nu", 125),
-            mk_songbook_song("Mera brännvin", "tf-sangbok-150-mera-brannvin", 83),
-            mk_songbook_song("Tycker du som jag", "tf-sangbok-150-tycker-du-som-jag", 79),
-            mk_songbook_song("Siffervisan", "tf-sangbok-150-siffervisan", 115),
-            mk_songbook_song("Vad i allsin dar?", "tf-sangbok-150-vad-i-allsin-dar", 54),
-            mk_songbook_song("Undulaten", "tf-sangbok-150-undulaten", 72),
+            mk_songbook_song("Rattataa", "rattataa", 0),
+            mk_songbook_song("Nu är det nu", "nu-ar-det-nu", 125),
+            mk_songbook_song("Mera brännvin", "mera-brannvin", 83),
+            mk_songbook_song("Tycker du som jag", "tycker-du-som-jag", 79),
+            mk_songbook_song("Siffervisan", "siffervisan", 115),
+            mk_songbook_song("Vad i allsin dar?", "vad-i-allsin-dar", 54),
+            mk_songbook_song("Undulaten", "undulaten", 72),
         ];
 
         self.tts_say("Diii duuuu diii duuuu diii duuu");
         sleep(3 * SECOND).await;
 
         let welcome_text = format!(
-            r#"===================================================================
+            r#"{} {}
+===================================================================
 Hi and welcome to this party. I will be your host today.
-{HELP_TEXT}
+{}
 Have fun, and don't drown in the shower!
-==================================================================="#
+==================================================================="#,
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION"),
+            HELP_TEXT.replace(
+                "songbook-url",
+                &format!(
+                    "{}/tf-sangbok-150-teknologvisan",
+                    self.config.songbook.songbook_url
+                )
+            )
         );
 
         for line in welcome_text.split('\n') {
@@ -550,8 +562,14 @@ async fn handle_incoming_event(
             // Avoid blocking current task by spawning a new one to
             // flood the help text
             let bus = bus.clone();
+            let songbook_url = config.songbook.songbook_url;
             tokio::spawn(async move {
-                for line in HELP_TEXT.split('\n') {
+                let help_text = HELP_TEXT.replace(
+                    "songbook-url",
+                    &format!("{}/tf-sangbok-150-teknologvisan", songbook_url),
+                );
+
+                for line in help_text.split('\n') {
                     bus.send(Event::Irc(IrcAction::SendMsg(line.to_string())));
                     sleep(ANTI_FLOOD_DELAY).await;
                 }
