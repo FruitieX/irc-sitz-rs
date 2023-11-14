@@ -1,0 +1,10 @@
+services:
+  irc-sitz-rs:
+    build: .
+    working_dir: /app
+    volumes:
+      - ${PWD}/Config.toml:/app/Config.toml
+    ports:
+      - "7878:7878"
+    environment:
+      - RUST_LOG=irc_sitz_rs=debug
