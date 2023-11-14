@@ -1,0 +1,5 @@
+nickname = "irc-bot"
+server = "port80a.se.quakenet.org"
+channel = "#bot-test-channel"
+songbook_url = "https://songbook.example.com"
+songbook_re = "https://(songbook|xn--sngbok-iua|sangbok|sångbok).example.com/(.+)"
