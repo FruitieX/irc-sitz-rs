@@ -527,7 +527,10 @@ async fn handle_incoming_event(
             let msg = if songs.is_empty() {
                 "No requested songs found :(".to_string()
             } else {
-                let songs_str: Vec<String> = songs.iter().map(|song| song.to_string()).collect();
+                let songs_str: Vec<String> = songs
+                    .iter()
+                    .map(|song| song.title.clone().unwrap_or_else(|| song.id.clone()))
+                    .collect();
                 format!("Song requests: {}", songs_str.join(", "))
             };
             songleader.irc_say(&msg);
