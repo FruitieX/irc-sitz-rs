@@ -20,6 +20,7 @@ in
     name = "env";
     buildInputs = [
       rustStableChannel
+      python3
 
       pkg-config
     ];

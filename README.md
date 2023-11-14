@@ -8,4 +8,4 @@ very useful
 building
 --------
 
-you probably need rust, clang, espeakng and other stuff
+you probably need rust, clang, python3, espeakng and other stuff
