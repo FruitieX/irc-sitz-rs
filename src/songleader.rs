@@ -208,7 +208,7 @@ impl SongleaderState {
             .requests
             .iter()
             .rposition(|song| song.queued_by == Some(nick.clone()))
-            .ok_or_else(|| anyhow!("You have no songs in the request queue, {nick}"))?;
+            .ok_or_else(|| anyhow!("No song requests found by {nick}"))?;
 
         let song = self.requests.remove(index);
         self.persist();

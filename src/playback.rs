@@ -248,7 +248,7 @@ impl Playback {
 
         match song {
             Some(song) => self.irc_say(&format!("Removed song {} from the queue", song.title)),
-            None => self.irc_say(&format!("You have no songs in the queue, {nick}")),
+            None => self.irc_say(&format!("No songs queued by {nick}")),
         }
     }
 

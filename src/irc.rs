@@ -95,7 +95,7 @@ async fn message_to_action(message: &Message) -> Option<Event> {
         let cmd = cmd_split.next()?;
 
         match cmd {
-            "!p" => {
+            "!play" | "!p" => {
                 let words: Vec<&str> = cmd_split.collect();
                 let url_or_search_terms = words.join(" ");
                 let song = get_yt_song_info(url_or_search_terms.to_string(), nick).await;
@@ -113,13 +113,13 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                     )))),
                 }
             }
-            "!q" => {
+            "!queue" | "!q" => {
                 let offset = cmd_split.next();
                 let offset = offset.and_then(|offset| offset.parse().ok());
 
                 Some(Event::Playback(PlaybackAction::ListQueue { offset }))
             }
-            "!speak" => {
+            "!speak" | "!say" => {
                 let words: Vec<&str> = cmd_split.collect();
                 let text = words.join(" ");
 
@@ -128,7 +128,7 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                     prio: Priority::Low,
                 }))
             }
-            "!request" | "!req" | "!r" => {
+            "!request" | "!req" | "!r" | "!add" => {
                 let words: Vec<&str> = cmd_split.collect();
                 let song = words.join(" ");
 
@@ -144,7 +144,7 @@ async fn message_to_action(message: &Message) -> Option<Event> {
             "!help" => Some(Event::Songleader(SongleaderAction::Help)),
 
             // "Admin" commands for songleader
-            "!song" => {
+            "!song" | "!sing" => {
                 let subcommand = cmd_split.next()?;
 
                 match subcommand {
@@ -174,8 +174,9 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                     "force-bingo-mode" => Some(Event::Songleader(SongleaderAction::ForceBingo)),
                     "force-singing-mode" => Some(Event::Songleader(SongleaderAction::ForceSinging)),
                     "pause" => Some(Event::Songleader(SongleaderAction::Pause)),
-                    "end" => Some(Event::Songleader(SongleaderAction::End)),
+                    "end" | "finish" => Some(Event::Songleader(SongleaderAction::End)),
                     "begin" => Some(Event::Songleader(SongleaderAction::Begin)),
+                    "list" | "queue" => Some(Event::Songleader(SongleaderAction::ListSongs)),
                     "rm" => {
                         let id = cmd_split.next().map(|s| s.to_string());
 
@@ -199,30 +200,31 @@ async fn message_to_action(message: &Message) -> Option<Event> {
             }
 
             // "Admin" commands for music playback
-            "!music" => {
+            "!music" | "!playback" => {
                 let subcommand = cmd_split.next()?;
 
                 match subcommand {
                     "next" | "skip" => Some(Event::Playback(PlaybackAction::Next)),
                     "prev" => Some(Event::Playback(PlaybackAction::Prev)),
-                    "play" => Some(Event::Playback(PlaybackAction::Play)),
+                    "play" | "resume" => Some(Event::Playback(PlaybackAction::Play)),
                     "pause" => Some(Event::Playback(PlaybackAction::Pause)),
                     "rm" => {
-                        let pos = cmd_split.next();
+                        let pos_or_nick = cmd_split.next();
 
-                        if pos.is_none() {
-                            return Some(Event::Playback(PlaybackAction::RmSongByNick { nick }));
-                        }
+                        match pos_or_nick {
+                            Some(pos_or_nick) => {
+                                let pos = pos_or_nick.parse().ok();
 
-                        let pos = pos.and_then(|pos| pos.parse().ok());
-
-                        match pos {
-                            Some(pos) => Some(Event::Playback(PlaybackAction::RmSongByPos {
-                                pos
-                            })),
-                            None => Some(Event::Irc(IrcAction::SendMsg(
-                                r#"Error: Invalid position! Usage: "!music rm" to remove most recently queued, or "!music rm <position>" to remove by position"#.to_string(),
-                            ))),
+                                match pos {
+                                    Some(pos) => {
+                                        Some(Event::Playback(PlaybackAction::RmSongByPos { pos }))
+                                    }
+                                    None => Some(Event::Playback(PlaybackAction::RmSongByNick {
+                                        nick: pos_or_nick.to_string(),
+                                    })),
+                                }
+                            }
+                            None => Some(Event::Playback(PlaybackAction::RmSongByNick { nick })),
                         }
                     }
                     "volume" => {
@@ -240,6 +242,12 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                         Some(Event::Mixer(MixerAction::SetSecondaryChannelDuckedVolume(
                             volume,
                         )))
+                    }
+                    "!queue" | "!q" => {
+                        let offset = cmd_split.next();
+                        let offset = offset.and_then(|offset| offset.parse().ok());
+
+                        Some(Event::Playback(PlaybackAction::ListQueue { offset }))
                     }
 
                     _ => None,
