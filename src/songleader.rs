@@ -440,7 +440,7 @@ Have fun, and don't drown in the shower!
                     self.irc_say(&format!("Next song coming up: {song}"));
                 }
 
-                self.irc_say("Type !bingo when you have found it!")
+                self.irc_say("Type bingo when you have found it!")
             }
             None => {
                 self.irc_say("No songs found :(, add more songs: !request <url>");
