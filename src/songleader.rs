@@ -198,6 +198,7 @@ impl SongleaderState {
             .ok_or_else(|| anyhow!("Song not found by id {id}"))?;
 
         let song = self.requests.remove(index);
+        self.persist();
 
         Ok(song)
     }
@@ -210,6 +211,7 @@ impl SongleaderState {
             .ok_or_else(|| anyhow!("You have no songs in the request queue, {nick}"))?;
 
         let song = self.requests.remove(index);
+        self.persist();
 
         Ok(song)
     }
@@ -582,6 +584,8 @@ async fn handle_incoming_event(
 
                 if nicks.len() >= NUM_TEMPO_NICKS {
                     songleader.enter_bingo_mode();
+                } else {
+                    songleader.state.persist();
                 }
             }
         }
@@ -592,6 +596,8 @@ async fn handle_incoming_event(
 
                 if nicks.len() >= NUM_BINGO_NICKS {
                     songleader.enter_singing_mode().await;
+                } else {
+                    songleader.state.persist();
                 }
             }
         }
