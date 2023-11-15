@@ -16,12 +16,13 @@ use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
 #[derive(Clone, Debug)]
 pub enum SymphoniaAction {
     PlayFile { file_path: String },
     PlayYtUrl { url: String },
+    Stop,
     Pause,
     Resume,
 }
@@ -40,14 +41,18 @@ fn start_decode_event_loop(bus: EventBus, playback_buf: Arc<Mutex<PlaybackBuffer
     tokio::spawn(async move {
         // Check for any new events on the bus
         let mut bus_tx = bus.subscribe();
+        let cancel_decode_task_tx = Arc::new(RwLock::new(None));
 
         loop {
             let event = bus_tx.recv().await;
 
             if let Event::Symphonia(action) = event {
                 let playback_buf = playback_buf.clone();
+                let cancel_decode_task_tx = cancel_decode_task_tx.clone();
+
                 tokio::spawn(async move {
-                    let result = handle_incoming_event(action, playback_buf).await;
+                    let result =
+                        handle_incoming_event(action, playback_buf, cancel_decode_task_tx).await;
 
                     if let Err(e) = result {
                         error!("Error while handling incoming event: {:?}", e);
@@ -61,51 +66,75 @@ fn start_decode_event_loop(bus: EventBus, playback_buf: Arc<Mutex<PlaybackBuffer
 async fn handle_incoming_event(
     action: SymphoniaAction,
     playback_buf: Arc<Mutex<PlaybackBuffer>>,
+    cancel_decode_task_tx: Arc<RwLock<Option<oneshot::Sender<()>>>>,
 ) -> Result<()> {
-    match action {
-        SymphoniaAction::PlayFile { file_path } => {
+    match &action {
+        SymphoniaAction::PlayFile { .. } | SymphoniaAction::PlayYtUrl { .. } => {
+            let (tx, cancel_decode_task_rx) = oneshot::channel();
+
+            {
+                let mut cancel_decode_task_tx = cancel_decode_task_tx.write().await;
+
+                if let Some(cancel_decode_task) = cancel_decode_task_tx.take() {
+                    debug!("Cancelling previous decode task");
+                    cancel_decode_task.send(()).ok();
+                }
+
+                *cancel_decode_task_tx = Some(tx);
+            }
+
             {
                 let mut playback_buf = playback_buf.lock().await;
                 playback_buf.clear();
                 playback_buf.set_paused(false);
             }
 
-            {
-                let playback_buf = playback_buf.clone();
-
-                // Create a media source. Note that the MediaSource trait is automatically implemented for File,
-                // among other types.
-                let source = Box::new(File::open(Path::new(&file_path))?);
-                let mss = MediaSourceStream::new(source, Default::default());
-                tokio::task::spawn_blocking(|| decode_source(mss, playback_buf)).await??
+            let (mss, url) = match action {
+                SymphoniaAction::PlayFile { file_path } => {
+                    // Create a media source. Note that the MediaSource trait is automatically implemented for File,
+                    // among other types.
+                    let source = Box::new(File::open(Path::new(&file_path))?);
+                    (
+                        MediaSourceStream::new(source, Default::default()),
+                        file_path,
+                    )
+                }
+                SymphoniaAction::PlayYtUrl { url } => {
+                    (get_yt_media_source_stream(url.clone()).await?, url)
+                }
+                _ => unreachable!(),
             };
 
-            info!("Finished decoding audio from {file_path}");
+            let result = {
+                let playback_buf = playback_buf.clone();
+                tokio::task::spawn_blocking(|| {
+                    decode_source(mss, playback_buf, cancel_decode_task_rx)
+                })
+                .await??
+            };
 
-            {
-                let mut playback_buf = playback_buf.lock().await;
-                playback_buf.set_eof(true);
+            match result {
+                DecoderResult::EndOfFile => {
+                    let mut playback_buf = playback_buf.lock().await;
+                    playback_buf.set_eof(true);
+                    info!("Finished decoding audio from {url}");
+                }
+                DecoderResult::Cancelled => {
+                    info!("Cancelled decoding audio");
+                }
             }
         }
-        SymphoniaAction::PlayYtUrl { url } => {
+        SymphoniaAction::Stop => {
             {
                 let mut playback_buf = playback_buf.lock().await;
-                playback_buf.clear();
-                playback_buf.set_paused(false);
+                playback_buf.set_paused(true);
             }
 
-            {
-                let playback_buf = playback_buf.clone();
+            let mut cancel_decode_task_tx = cancel_decode_task_tx.write().await;
 
-                let mss = get_yt_media_source_stream(url.clone()).await?;
-                tokio::task::spawn_blocking(|| decode_source(mss, playback_buf)).await??
-            };
-
-            info!("Finished decoding audio from {url}");
-
-            {
-                let mut playback_buf = playback_buf.lock().await;
-                playback_buf.set_eof(true);
+            if let Some(cancel_decode_task) = cancel_decode_task_tx.take() {
+                debug!("Cancelling previous decode task");
+                cancel_decode_task.send(()).ok();
             }
         }
         SymphoniaAction::Pause => {
@@ -146,10 +175,16 @@ fn start_emit_sample_loop(
     });
 }
 
+pub enum DecoderResult {
+    EndOfFile,
+    Cancelled,
+}
+
 pub fn decode_source(
     mss: MediaSourceStream,
     playback_buf: Arc<Mutex<PlaybackBuffer>>,
-) -> Result<()> {
+    mut cancel_decode_task_rx: oneshot::Receiver<()>,
+) -> Result<DecoderResult> {
     // Create a hint to help the format registry guess what format reader is appropriate. In this
     // example we'll leave it empty.
     let hint = Hint::new();
@@ -190,7 +225,7 @@ pub fn decode_source(
             Err(symphonia::core::errors::Error::IoError(e))
                 if e.kind() == std::io::ErrorKind::UnexpectedEof =>
             {
-                return Ok(());
+                return Ok(DecoderResult::EndOfFile);
             }
             _ => packet?,
         };
@@ -237,6 +272,11 @@ pub fn decode_source(
             );
 
             let samples: Vec<Sample> = samples.iter().copied().tuples().collect();
+
+            // Bail if task has been cancelled
+            if cancel_decode_task_rx.try_recv().is_ok() {
+                return Ok(DecoderResult::Cancelled);
+            }
 
             // Write samples to the buffer
             {

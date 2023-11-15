@@ -266,6 +266,9 @@ impl Playback {
 
     fn end_of_queue(&mut self) {
         self.state.is_playing = false;
+
+        self.bus.send(Event::Symphonia(SymphoniaAction::Stop));
+
         self.irc_say("Playback queue ended.");
         self.state.persist()
     }
