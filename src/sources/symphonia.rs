@@ -67,6 +67,7 @@ async fn handle_incoming_event(
             {
                 let mut playback_buf = playback_buf.lock().await;
                 playback_buf.clear();
+                playback_buf.set_paused(false);
             }
 
             {
@@ -90,6 +91,7 @@ async fn handle_incoming_event(
             {
                 let mut playback_buf = playback_buf.lock().await;
                 playback_buf.clear();
+                playback_buf.set_paused(false);
             }
 
             {
