@@ -37,6 +37,7 @@ pub async fn init(bus: &EventBus, config: &crate::config::Config) -> Result<()> 
     {
         let irc_channel = irc_channel.clone();
         let bus = bus.clone();
+        let config = config.clone();
 
         // Loop over incoming IRC messages
         tokio::spawn(async move {
@@ -46,8 +47,10 @@ pub async fn init(bus: &EventBus, config: &crate::config::Config) -> Result<()> 
 
                 let irc_channel = irc_channel.clone();
                 let bus = bus.clone();
+                let config = config.clone();
+
                 tokio::spawn(async move {
-                    let action = message_to_action(&message).await;
+                    let action = message_to_action(&message, &config).await;
 
                     // Dispatch if msg resulted in action and msg is from target irc_channel
                     if let Some(action) = action {
@@ -84,7 +87,7 @@ pub async fn init(bus: &EventBus, config: &crate::config::Config) -> Result<()> 
     Ok(())
 }
 
-async fn message_to_action(message: &Message) -> Option<Event> {
+async fn message_to_action(message: &Message, config: &crate::config::Config) -> Option<Event> {
     if let Command::PRIVMSG(_channel, text) = &message.command {
         let nick = message.source_nickname()?.to_string();
 
@@ -98,6 +101,17 @@ async fn message_to_action(message: &Message) -> Option<Event> {
             "!play" | "!p" => {
                 let words: Vec<&str> = cmd_split.collect();
                 let url_or_search_terms = words.join(" ");
+
+                let matches_songbook_url =
+                    config.songbook.songbook_re.is_match(&url_or_search_terms);
+
+                if matches_songbook_url {
+                    return Some(Event::Songleader(SongleaderAction::RequestSongUrl {
+                        url: url_or_search_terms,
+                        queued_by: nick,
+                    }));
+                }
+
                 let song = get_yt_song_info(url_or_search_terms.to_string(), nick).await;
 
                 match song {
@@ -113,12 +127,13 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                     )))),
                 }
             }
-            "!queue" | "!q" => {
+            "!queue" | "!q" | "!np" => {
                 let offset = cmd_split.next();
                 let offset = offset.and_then(|offset| offset.parse().ok());
 
                 Some(Event::Playback(PlaybackAction::ListQueue { offset }))
             }
+            "!rm" => Some(Event::Playback(PlaybackAction::RmSongByNick { nick })),
             "!speak" | "!say" => {
                 let words: Vec<&str> = cmd_split.collect();
                 let text = words.join(" ");
@@ -178,22 +193,16 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                     "begin" => Some(Event::Songleader(SongleaderAction::Begin)),
                     "list" | "queue" => Some(Event::Songleader(SongleaderAction::ListSongs)),
                     "rm" => {
-                        let id = cmd_split.next().map(|s| s.to_string());
+                        let id: Vec<&str> = cmd_split.collect();
+                        let id = id.join(" ");
 
-                        if id.is_none() {
+                        if id.is_empty() {
                             return Some(Event::Songleader(SongleaderAction::RmSongByNick {
                                 nick,
                             }));
                         }
 
-                        match id {
-                            Some(id) => {
-                                Some(Event::Songleader(SongleaderAction::RmSongById { id }))
-                            }
-                            None => Some(Event::Irc(IrcAction::SendMsg(
-                                "Error: Missing song ID! Usage: !song rm <song ID>".to_string(),
-                            ))),
-                        }
+                        Some(Event::Songleader(SongleaderAction::RmSongById { id }))
                     }
                     _ => None,
                 }

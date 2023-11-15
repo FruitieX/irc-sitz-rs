@@ -29,10 +29,11 @@ const TEMPO_DEADLINE: Duration = Duration::from_secs(300);
 const HELP_TEXT: &str = r#"
 ===================================================================
 Useful commands:
-Add a song you want to sing:              !request songbook-url
+Add a YouTube URL to the music queue:     !p https://youtu.be/dQw4w9WgXcQ
+Remove most recently queued music by you: !rm
+Request a song you want to sing:          !request songbook-url
 List current requests:                    !ls
-And to say stuff, use:                    !speak <text>
-Add a YouTube url to the music queue:     !p <url>
+To say stuff, use:                        !speak hello world
 For help during the evening:              !help
 And the most important - to sing a song:  !tempo
 ==================================================================="#;
@@ -639,7 +640,7 @@ async fn handle_incoming_event(
             tokio::spawn(async move {
                 let help_text = HELP_TEXT.replace(
                     "songbook-url",
-                    &format!("{}/tf-sangbok-150-teknologvisan", songbook_url),
+                    &format!("{songbook_url}/tf-sangbok-150-teknologvisan"),
                 );
 
                 for line in help_text.split('\n') {
