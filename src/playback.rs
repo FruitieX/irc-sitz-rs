@@ -236,7 +236,11 @@ impl Playback {
             .iter()
             .rposition(|song| song.queued_by == nick);
 
-        let song = if let Some(index) = index {
+        let song = if index == Some(0) {
+            let song = self.state.queued_songs.get(0).cloned();
+            self.next(true);
+            song
+        } else if let Some(index) = index {
             Some(self.state.queued_songs.remove(index))
         } else {
             None
