@@ -132,7 +132,19 @@ impl Playback {
 
         debug!("Initial playback state:\n{:#?}", state);
 
-        Playback { bus, state }
+        // Play next song if it exists
+        let first_song = state.queued_songs.get(0).cloned();
+        let should_play = state.should_play;
+
+        let mut playback = Playback { bus, state };
+
+        if should_play {
+            if let Some(song) = first_song {
+                playback.play_song(song);
+            }
+        }
+
+        playback
     }
 
     /// Convenience method for sending irc messages
@@ -163,8 +175,8 @@ impl Playback {
             self.state.queued_songs.push(song.clone());
 
             let msg = format!(
-                "Added {} to the queue. Time until playback: {} min",
-                song.title, time_until_playback
+                "Added {} {} to the queue. Time until playback: {} min",
+                song.title, song.url, time_until_playback
             );
             self.irc_say(&msg);
 
