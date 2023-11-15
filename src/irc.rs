@@ -1,5 +1,6 @@
 use crate::{
     event::{Event, EventBus},
+    mixer::MixerAction,
     playback::{PlaybackAction, MAX_SONG_DURATION},
     songbook::SongbookSong,
     songleader::SongleaderAction,
@@ -224,6 +225,23 @@ async fn message_to_action(message: &Message) -> Option<Event> {
                             ))),
                         }
                     }
+                    "volume" => {
+                        let volume: f64 =
+                            cmd_split.next().and_then(|volume| volume.parse().ok())?;
+                        let volume = volume.clamp(0.0, 1.0);
+
+                        Some(Event::Mixer(MixerAction::SetSecondaryChannelVolume(volume)))
+                    }
+                    "volume-ducked" => {
+                        let volume: f64 =
+                            cmd_split.next().and_then(|volume| volume.parse().ok())?;
+                        let volume = volume.clamp(0.0, 1.0);
+
+                        Some(Event::Mixer(MixerAction::SetSecondaryChannelDuckedVolume(
+                            volume,
+                        )))
+                    }
+
                     _ => None,
                 }
             }

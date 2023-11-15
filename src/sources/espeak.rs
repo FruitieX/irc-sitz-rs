@@ -95,13 +95,9 @@ fn start_emit_sample_loop(
 
             if speaking != was_speaking {
                 if speaking {
-                    bus.send(Event::Mixer(MixerAction::SetSecondaryChannelsVolume {
-                        volume: 0.25,
-                    }))
+                    bus.send(Event::Mixer(MixerAction::DuckSecondaryChannels))
                 } else {
-                    bus.send(Event::Mixer(MixerAction::SetSecondaryChannelsVolume {
-                        volume: 1.0,
-                    }))
+                    bus.send(Event::Mixer(MixerAction::UnduckSecondaryChannels))
                 }
             }
 
