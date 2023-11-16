@@ -2,6 +2,7 @@ use crate::{
     buffer::PlaybackBuffer,
     constants::SAMPLE_RATE,
     event::{Event, EventBus},
+    irc::IrcAction,
     mixer::{MixerInput, Sample},
     playback::PlaybackAction,
     youtube::get_yt_media_source_stream,
@@ -49,13 +50,17 @@ fn start_decode_event_loop(bus: EventBus, playback_buf: Arc<Mutex<PlaybackBuffer
             if let Event::Symphonia(action) = event {
                 let playback_buf = playback_buf.clone();
                 let cancel_decode_task_tx = cancel_decode_task_tx.clone();
+                let bus = bus.clone();
 
                 tokio::spawn(async move {
                     let result =
                         handle_incoming_event(action, playback_buf, cancel_decode_task_tx).await;
 
                     if let Err(e) = result {
-                        error!("Error while handling incoming event: {:?}", e);
+                        let msg = format!("Error during music playback: {}, pausing playback", e);
+                        error!("{}", msg);
+                        bus.send(Event::Irc(IrcAction::SendMsg(msg)));
+                        bus.send(Event::Playback(PlaybackAction::Pause));
                     }
                 });
             }
@@ -120,7 +125,7 @@ async fn handle_incoming_event(
                     info!("Finished decoding audio from {url}");
                 }
                 DecoderResult::Cancelled => {
-                    info!("Cancelled decoding audio");
+                    info!("Cancelled decoding audio from {url}");
                 }
             }
         }
