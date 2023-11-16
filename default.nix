@@ -15,19 +15,15 @@ let
   };
 in
   with nixpkgs;
-  stdenv.mkDerivation {
+  pkgs.llvmPackages.stdenv.mkDerivation {
     name = "env";
     buildInputs = [
       rustStableChannel
       python3
       pkg-config
-    ];
-    nativeBuildInputs = [
-      llvmPackages.libclang
-      llvmPackages.libcxxClang
-      clang
+      #llvmPackages.libclang
+      #clang
       espeak-ng
     ];
     LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
-    # BINDGEN_EXTRA_CLANG_ARGS = "-isystem ${llvmPackages.libclang.lib}/lib/clang/${lib.getVersion clang}/include";
   }
