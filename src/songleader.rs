@@ -25,7 +25,7 @@ const NUM_BINGO_NICKS: usize = 3;
 const ANTI_FLOOD_DELAY: Duration = Duration::from_millis(1200);
 const SECOND: Duration = Duration::from_secs(1);
 const TEMPO_DEADLINE_REDUCTION: Duration = Duration::from_secs(60);
-const TEMPO_DEADLINE: Duration = Duration::from_secs(300);
+const TEMPO_DEADLINE: Duration = Duration::from_secs(420);
 const HELP_TEXT: &str = r#"
 ===================================================================
 Useful commands:
