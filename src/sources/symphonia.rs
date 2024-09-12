@@ -53,14 +53,18 @@ fn start_decode_event_loop(bus: EventBus, playback_buf: Arc<Mutex<PlaybackBuffer
                 let bus = bus.clone();
 
                 tokio::spawn(async move {
-                    let result =
-                        handle_incoming_event(action, playback_buf, cancel_decode_task_tx).await;
+                    let result = {
+                        let playback_buf = playback_buf.clone();
+                        handle_incoming_event(action, playback_buf, cancel_decode_task_tx).await
+                    };
 
                     if let Err(e) = result {
-                        let msg = format!("Error during music playback: {}, pausing playback", e);
+                        let msg = format!("Error during music playback: {}", e);
                         error!("{}", msg);
                         bus.send(Event::Irc(IrcAction::SendMsg(msg)));
-                        bus.send(Event::Playback(PlaybackAction::Pause));
+                        // bus.send(Event::Playback(PlaybackAction::Pause));
+                        let mut playback_buf = playback_buf.lock().await;
+                        playback_buf.set_eof(true);
                     }
                 });
             }
