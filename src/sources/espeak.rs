@@ -140,6 +140,7 @@ mod espeakng_sys_example {
         /// The audio data
         pub wav: Vec<i16>,
         /// The sample rate of the audio
+        #[allow(dead_code)]
         pub sample_rate: i32,
     }
 
