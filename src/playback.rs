@@ -133,7 +133,7 @@ impl Playback {
         debug!("Initial playback state:\n{:#?}", state);
 
         // Play next song if it exists
-        let first_song = state.queued_songs.get(0).cloned();
+        let first_song = state.queued_songs.first().cloned();
         let should_play = state.should_play;
 
         let mut playback = Playback { bus, state };
@@ -195,7 +195,7 @@ impl Playback {
         };
 
         let is_empty = self.state.queued_songs.is_empty();
-        let np = fmt_song(self.state.queued_songs.get(0));
+        let np = fmt_song(self.state.queued_songs.first());
         let next = fmt_song(self.state.queued_songs.get(1));
         let len = self.queue_len();
         let duration_min = self.queue_duration_mins();
@@ -214,7 +214,7 @@ impl Playback {
 
     fn rm_song_at_pos(&mut self, pos: usize) {
         let song = if pos == 0 {
-            let song = self.state.queued_songs.get(0).cloned();
+            let song = self.state.queued_songs.first().cloned();
             self.next(true);
             song
         } else if pos < self.state.queued_songs.len() {
@@ -237,7 +237,7 @@ impl Playback {
             .rposition(|song| song.queued_by == nick);
 
         let song = if index == Some(0) {
-            let song = self.state.queued_songs.get(0).cloned();
+            let song = self.state.queued_songs.first().cloned();
             self.next(true);
             song
         } else if let Some(index) = index {
@@ -287,7 +287,7 @@ impl Playback {
             self.end_of_queue();
         } else {
             // Play next song if it exists
-            let song = self.state.queued_songs.get(0).cloned();
+            let song = self.state.queued_songs.first().cloned();
             if let Some(song) = song {
                 self.play_song(song);
             }
@@ -348,7 +348,7 @@ async fn handle_incoming_event(action: PlaybackAction, playback: Arc<RwLock<Play
                 playback.bus.send(Event::Symphonia(SymphoniaAction::Resume));
             } else {
                 // Play next song if it exists
-                let song = playback.state.queued_songs.get(0).cloned();
+                let song = playback.state.queued_songs.first().cloned();
                 if let Some(song) = song {
                     playback.play_song(song);
                 }
