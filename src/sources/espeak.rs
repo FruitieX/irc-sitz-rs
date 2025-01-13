@@ -242,10 +242,14 @@ mod espeakng_sys_example {
             .map(|f| *f)
             .collect::<Vec<espeak_EVENT>>();
 
-        // Turn the audio wav data array into a Vec.
-        // We must clone from the slice, as the provided array's memory is managed by C
-        let wav_slice = std::slice::from_raw_parts_mut(wav, sample_count as usize);
-        let mut wav_vec = wav_slice.iter_mut().map(|f| *f).collect::<Vec<i16>>();
+        let mut wav_vec = if sample_count == 0 {
+            vec![]
+        } else {
+            // Turn the audio wav data array into a Vec.
+            // We must clone from the slice, as the provided array's memory is managed by C
+            let wav_slice = std::slice::from_raw_parts_mut(wav, sample_count as usize);
+            wav_slice.iter_mut().map(|f| *f).collect::<Vec<i16>>()
+        };
 
         // Determine if this is the end of the synth
         let mut is_end = false;
