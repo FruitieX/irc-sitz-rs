@@ -112,6 +112,13 @@ async fn message_to_action(message: &Message, config: &crate::config::Config) ->
                     }));
                 }
 
+                if url_or_search_terms.is_empty() {
+                    return Some(Event::Irc(IrcAction::SendMsg(
+                        "Error: Missing YouTube URL or search terms! Usage: !play <URL or search terms>"
+                            .to_string(),
+                    )));
+                }
+
                 let song = get_yt_song_info(url_or_search_terms.to_string(), nick).await;
 
                 match song {
