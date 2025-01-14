@@ -44,7 +44,8 @@ pub async fn get_song_info(url: &str, config: &Config, queued_by: &str) -> Resul
     let id = url_matches
         .get(2)
         .map(|id| id.as_str().to_string())
-        .context("No ID found in URL")?;
+        .context("No ID found in URL")?
+        .replace("/", "");
 
     let result = reqwest::get(url)
         .await
