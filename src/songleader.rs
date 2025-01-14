@@ -182,7 +182,12 @@ impl SongleaderState {
         let songs = self.get_songs();
 
         if songs.contains(&song) {
-            return Err(anyhow!("Song already requested"));
+            if let Some(index) = self.backup.iter().position(|s| s == &song) {
+                // If song already in backup queue, remove it and add it to requests
+                self.backup.remove(index);
+            } else {
+                return Err(anyhow!("Song already requested"));
+            }
         }
 
         self.requests.push(song.clone());
