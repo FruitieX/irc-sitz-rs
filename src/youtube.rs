@@ -1,11 +1,10 @@
 use crate::playback::Song;
 use anyhow::{Context, Result};
-use futures::TryStreamExt;
 use std::path::Path;
 use symphonia::core::io::MediaSource;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::io::ReadOnlySource;
-use tokio_util::io::StreamReader;
+use tokio::io::AsyncBufReadExt;
 use youtube_dl::{download_yt_dlp, YoutubeDl};
 
 pub async fn init() -> anyhow::Result<()> {
@@ -21,32 +20,47 @@ pub async fn init() -> anyhow::Result<()> {
 }
 
 pub async fn get_yt_media_source_stream(url: String) -> Result<MediaSourceStream> {
-    let output = YoutubeDl::new(url)
-        .youtube_dl_path("./yt-dlp")
-        .extract_audio(true)
+    // Spawn yt-dlp ourselves so we can capture stdout as a stream
+    let mut cmd = tokio::process::Command::new("./yt-dlp")
+        .arg(url)
+        .arg("--no-progress")
+
+        // this speeds up the process slightly but maybe reduces compatibility
+        // .arg("--extractor-args")
+        // .arg("youtube:player_client=tv")
+
         // until symphonia has opus support
-        .format("bestaudio[ext=m4a]")
-        .run_async()
-        .await?
-        .into_single_video();
+        .arg("--format")
+        .arg("bestaudio[ext=m4a]")
+        .arg("-o")
+        .arg("-")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
 
-    let video = output.context("No video found")?;
+    let stdout = cmd.stdout.take().context("Failed to get yt-dlp stdout")?;
+    let stderr = cmd.stderr.take().context("Failed to get yt-dlp stderr")?;
 
-    debug!(
-        "Found video {:?} with duration {:?}",
-        &video.title, &video.duration
-    );
+    tokio::spawn(async move {
+        let output = cmd.wait_with_output().await.unwrap();
+        if !output.status.success() {
+            error!(
+                "yt-dlp failed (exit code {code}): {stderr:?}",
+                code = output.status.code().unwrap_or_default(),
+                stderr = output.stderr
+            );
+        }
+    });
 
-    let url = video.url.context("No URL found in yt-dlp JSON!")?;
-    let stream = reqwest::get(&url)
-        .await?
-        .bytes_stream()
-        .map_err(|e| futures::io::Error::new(std::io::ErrorKind::Other, e));
+    tokio::spawn(async move {
+        // Print stderr to log
+        let mut reader = tokio::io::BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            debug!("yt-dlp stderr: {}", line);
+        }
+    });
 
-    let read = StreamReader::new(stream);
-
-    // let reader = BufReader::new(stream.into_async_read());
-    let sync_reader = tokio_util::io::SyncIoBridge::new(read);
+    let sync_reader = tokio_util::io::SyncIoBridge::new(stdout);
 
     let source = Box::new(ReadOnlySource::new(sync_reader)) as Box<dyn MediaSource>;
 
