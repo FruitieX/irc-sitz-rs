@@ -199,7 +199,10 @@ pub fn decode_source(
     let hint = Hint::new();
 
     // Use the default options when reading and decoding.
-    let format_opts: FormatOptions = Default::default();
+    let format_opts: FormatOptions = FormatOptions {
+        enable_gapless: true,
+        ..Default::default()
+    };
     let metadata_opts: MetadataOptions = Default::default();
     let decoder_opts: DecoderOptions = Default::default();
 
