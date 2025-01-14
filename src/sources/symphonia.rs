@@ -279,7 +279,7 @@ pub fn decode_source(
             let samples = buf.samples();
             sample_count += samples.len() / 2;
             trace!(
-                "\rDecoded {:.2} seconds",
+                "Decoded {:.2} seconds",
                 sample_count as f64 / SAMPLE_RATE as f64
             );
 
