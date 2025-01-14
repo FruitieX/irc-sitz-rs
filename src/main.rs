@@ -17,7 +17,7 @@ mod youtube;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    pretty_env_logger::init();
+    pretty_env_logger::init_timed();
 
     let config = config::load().await?;
     let bus = event::EventBus::new();
