@@ -79,7 +79,14 @@ pub fn debug(bus: &EventBus) {
         let mut bus = bus.subscribe();
         loop {
             let event = bus.recv().await;
-            debug!("Received event: {:?}", event);
+            if matches!(
+                event,
+                Event::Playback(PlaybackAction::PlaybackProgress { .. })
+            ) {
+                trace!("Received event: {:?}", event);
+            } else {
+                debug!("Received event: {:?}", event);
+            }
         }
     });
 }

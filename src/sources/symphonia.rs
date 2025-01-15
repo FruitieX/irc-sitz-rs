@@ -165,6 +165,7 @@ fn start_emit_sample_loop(
     playback_buf: Arc<Mutex<PlaybackBuffer>>,
 ) {
     tokio::spawn(async move {
+        let mut last_sent_position = 0;
         loop {
             let (sample, decoder_hit_eof) = {
                 let mut playback_buf = playback_buf.lock().await;
@@ -175,6 +176,19 @@ fn start_emit_sample_loop(
                 let mut playback_buf = playback_buf.lock().await;
                 playback_buf.clear();
                 bus.send(Event::Playback(PlaybackAction::EndOfSong))
+            } else {
+                let position = {
+                    let playback_buf = playback_buf.lock().await;
+                    playback_buf.get_position_secs(SAMPLE_RATE) as u64
+                };
+
+                if position != last_sent_position {
+                    last_sent_position = position;
+
+                    bus.send(Event::Playback(PlaybackAction::PlaybackProgress {
+                        position,
+                    }))
+                }
             }
 
             tx.send(sample.unwrap_or_default())

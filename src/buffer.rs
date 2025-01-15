@@ -29,6 +29,10 @@ impl PlaybackBuffer {
         sample
     }
 
+    pub fn get_position_secs(&self, sample_rate: u32) -> f64 {
+        self.position as f64 / sample_rate as f64
+    }
+
     pub fn push_samples<I: IntoIterator<Item = Sample>>(&mut self, samples: I) {
         self.buffer.extend(samples);
     }

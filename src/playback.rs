@@ -54,6 +54,9 @@ pub enum PlaybackAction {
 
     /// Play next song
     Next,
+
+    /// Notification that playback has progressed
+    PlaybackProgress { position: u64 },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -72,6 +75,9 @@ struct PlaybackState {
     /// Whether we should start playing if queue empty and a new song is
     /// enqueued
     should_play: bool,
+
+    /// Progress of the current song in seconds
+    playback_progress: u64,
 }
 
 impl Default for PlaybackState {
@@ -82,6 +88,7 @@ impl Default for PlaybackState {
             song_loaded: false,
             is_playing: false,
             should_play: true,
+            playback_progress: 0,
         }
     }
 }
@@ -164,6 +171,7 @@ impl Playback {
             .map(|song| song.duration)
             .sum::<u64>()
             / 60
+            - self.state.playback_progress / 60
     }
 
     fn enqueue(&mut self, song: Song) {
@@ -195,8 +203,9 @@ impl Playback {
         };
 
         let is_empty = self.state.queued_songs.is_empty();
-        let np = fmt_song(self.state.queued_songs.first());
-        let next = fmt_song(self.state.queued_songs.get(1));
+        let np = self.state.queued_songs.first();
+        let np_formatted = fmt_song(np);
+        let next_formatted = fmt_song(self.state.queued_songs.get(1));
         let len = self.queue_len();
         let duration_min = self.queue_duration_mins();
 
@@ -206,7 +215,20 @@ impl Playback {
             let song = fmt_song(self.state.queued_songs.get(offset));
             format!("Song at position {offset}: {song}")
         } else {
-            format!("Now playing: {np}, next up: {next}. Queue length: {len} ({duration_min} min)")
+            let state = if self.state.is_playing {
+                "Now playing"
+            } else {
+                "Paused"
+            };
+            let np_duration = np.map(|song| song.duration).unwrap_or_default();
+            let progress = format!(
+                "{}:{:02}/{}:{:02}",
+                self.state.playback_progress / 60,
+                self.state.playback_progress % 60,
+                np_duration / 60,
+                np_duration % 60
+            );
+            format!("{state} ({progress}): {np_formatted}, next up: {next_formatted}. Queue length: {len} songs ({duration_min} min)")
         };
 
         self.irc_say(&msg);
@@ -255,6 +277,7 @@ impl Playback {
     fn play_song(&mut self, song: Song) {
         self.state.is_playing = true;
         self.state.song_loaded = true;
+        self.state.playback_progress = 0;
 
         self.bus.send(Event::Symphonia(SymphoniaAction::PlayYtUrl {
             url: song.url,
@@ -374,6 +397,9 @@ async fn handle_incoming_event(action: PlaybackAction, playback: Arc<RwLock<Play
         }
         PlaybackAction::Prev => {
             playback.prev();
+        }
+        PlaybackAction::PlaybackProgress { position } => {
+            playback.state.playback_progress = position;
         }
     }
 }
