@@ -24,11 +24,9 @@ pub async fn get_yt_media_source_stream(url: String) -> Result<MediaSourceStream
     let mut cmd = tokio::process::Command::new("./yt-dlp")
         .arg(url)
         .arg("--no-progress")
-
         // this speeds up the process slightly but maybe reduces compatibility
         // .arg("--extractor-args")
         // .arg("youtube:player_client=tv")
-
         // until symphonia has opus support
         .arg("--format")
         .arg("bestaudio[ext=m4a]")
