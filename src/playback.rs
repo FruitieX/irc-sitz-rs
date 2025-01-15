@@ -183,7 +183,7 @@ impl Playback {
             self.state.queued_songs.push(song.clone());
 
             let msg = format!(
-                "Added {} {} to the queue. Time until playback: {} min",
+                "Added {} ({}) to the queue. Time until playback: {} min",
                 song.title, song.url, time_until_playback
             );
             self.irc_say(&msg);
@@ -198,8 +198,13 @@ impl Playback {
 
     fn list_queue(&self, offset: Option<usize>) {
         let fmt_song = |song: Option<&Song>| {
-            song.map(|song| format!("{} (queued by {})", song.title, song.queued_by))
-                .unwrap_or_else(|| "(nothing)".to_string())
+            song.map(|song| {
+                format!(
+                    "{} ({}, queued by {})",
+                    song.title, song.url, song.queued_by
+                )
+            })
+            .unwrap_or_else(|| "(nothing)".to_string())
         };
 
         let is_empty = self.state.queued_songs.is_empty();
