@@ -1,4 +1,4 @@
-FROM rust:1.84@sha256:f7cbb35003d4ffb5543f8ad6480c1e36bbae5c3609523c9f0c2e223668ee9c1a
+FROM rust:1.84@sha256:ec7dae306d01d4c52d2b6cce4a62a8da2f2e54df543e527e1656ae7c4ef632b3
 
 RUN apt-get update
 RUN apt-get install -y libclang-dev libespeak-ng-libespeak-dev python3
