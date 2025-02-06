@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.1](https://github.com/FruitieX/irc-sitz-rs/compare/v2.0.0...v2.0.1) (2025-02-06)
+
+
+### Bug Fixes
+
+* **deps:** update rust crate bytes to v1.10.0 ([#81](https://github.com/FruitieX/irc-sitz-rs/issues/81)) ([b4b4428](https://github.com/FruitieX/irc-sitz-rs/commit/b4b442855691c11a52f97a047e502b15dc9f3bae))
+* **deps:** update rust crate serde_json to v1.0.136 ([#72](https://github.com/FruitieX/irc-sitz-rs/issues/72)) ([b111a94](https://github.com/FruitieX/irc-sitz-rs/commit/b111a94dd62fb4163faa97987dfa2d801089c735))
+* **deps:** update rust crate serde_json to v1.0.137 ([#74](https://github.com/FruitieX/irc-sitz-rs/issues/74)) ([667d06c](https://github.com/FruitieX/irc-sitz-rs/commit/667d06c76842a00bfc62695c67f38b96f57ed47d))
+* **deps:** update rust crate serde_json to v1.0.138 ([#78](https://github.com/FruitieX/irc-sitz-rs/issues/78)) ([985ac63](https://github.com/FruitieX/irc-sitz-rs/commit/985ac63c6c5e0e98b869c3c5de72e0780c3b75d2))
+* **deps:** update rust crate toml to v0.8.20 ([#84](https://github.com/FruitieX/irc-sitz-rs/issues/84)) ([0799135](https://github.com/FruitieX/irc-sitz-rs/commit/07991357b8f396101bb70840bdcd60a497f86dbc))
+
 ## 2.0.0 (2025-01-15)
 
 
