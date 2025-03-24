@@ -21,7 +21,7 @@ irc = { version = "=1.0.0", default-features = false, features = [
 ] }
 itertools = "=0.14.0"
 lazy_static = "=1.5.0"
-log = "=0.4.26"
+log = "=0.4.27"
 pretty_env_logger = "=0.5.0"
 rand = "=0.8.5"
 regex = "=1.11.1"
