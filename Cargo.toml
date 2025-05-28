@@ -12,7 +12,7 @@ bytes = "=1.10.1"
 espeakng-sys = { version = "=0.3.0", features = ["clang-runtime"] }
 futures = "=0.3.31"
 hound = "=3.5.1"
-irc = { version = "=1.0.0", default-features = false, features = [
+irc = { version = "=1.1.0", default-features = false, features = [
 	"serde",
 	"serde_derive",
 	"tokio-rustls",
