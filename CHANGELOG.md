@@ -1,5 +1,45 @@
 # Changelog
 
+## [2.0.1](https://github.com/FruitieX/irc-sitz-rs/compare/v2.0.0...v2.0.1) (2025-06-12)
+
+
+### Bug Fixes
+
+* **deps:** update rust crate anyhow to v1.0.96 ([#88](https://github.com/FruitieX/irc-sitz-rs/issues/88)) ([abd30e5](https://github.com/FruitieX/irc-sitz-rs/commit/abd30e59d157e29121bac668fab4296614c5d5e6))
+* **deps:** update rust crate anyhow to v1.0.97 ([#101](https://github.com/FruitieX/irc-sitz-rs/issues/101)) ([cd6b5f5](https://github.com/FruitieX/irc-sitz-rs/commit/cd6b5f5c16f6f264850eafbc973f495049ea7aa1))
+* **deps:** update rust crate anyhow to v1.0.98 ([#128](https://github.com/FruitieX/irc-sitz-rs/issues/128)) ([536cd12](https://github.com/FruitieX/irc-sitz-rs/commit/536cd120a4335ecc75c94c1055071ea033115207))
+* **deps:** update rust crate bytes to v1.10.0 ([#81](https://github.com/FruitieX/irc-sitz-rs/issues/81)) ([b4b4428](https://github.com/FruitieX/irc-sitz-rs/commit/b4b442855691c11a52f97a047e502b15dc9f3bae))
+* **deps:** update rust crate bytes to v1.10.1 ([#104](https://github.com/FruitieX/irc-sitz-rs/issues/104)) ([5c8b782](https://github.com/FruitieX/irc-sitz-rs/commit/5c8b782ec316d3a6e89bee0a68f8d1db37a2ff3b))
+* **deps:** update rust crate espeakng-sys to v0.3.0 ([#144](https://github.com/FruitieX/irc-sitz-rs/issues/144)) ([72cda14](https://github.com/FruitieX/irc-sitz-rs/commit/72cda14c41408725618be35548da666c8549e76e))
+* **deps:** update rust crate log to v0.4.26 ([#92](https://github.com/FruitieX/irc-sitz-rs/issues/92)) ([ec8ce8f](https://github.com/FruitieX/irc-sitz-rs/commit/ec8ce8fed2b6076559a350663423efa608562007))
+* **deps:** update rust crate log to v0.4.27 ([#120](https://github.com/FruitieX/irc-sitz-rs/issues/120)) ([3cefc15](https://github.com/FruitieX/irc-sitz-rs/commit/3cefc15ed0c495d7fc78efffd812d739c71d0358))
+* **deps:** update rust crate reqwest to v0.12.13 ([#109](https://github.com/FruitieX/irc-sitz-rs/issues/109)) ([8ae1353](https://github.com/FruitieX/irc-sitz-rs/commit/8ae1353f5e8b80289479ff2c630dab43396aaaae))
+* **deps:** update rust crate reqwest to v0.12.14 ([#110](https://github.com/FruitieX/irc-sitz-rs/issues/110)) ([ef0173b](https://github.com/FruitieX/irc-sitz-rs/commit/ef0173bd4919524f1f60b331b41a83f0d099d1f6))
+* **deps:** update rust crate reqwest to v0.12.15 ([#117](https://github.com/FruitieX/irc-sitz-rs/issues/117)) ([b94f9f8](https://github.com/FruitieX/irc-sitz-rs/commit/b94f9f8fa19a7e490e2f91cf98f1422660956699))
+* **deps:** update rust crate reqwest to v0.12.16 ([#151](https://github.com/FruitieX/irc-sitz-rs/issues/151)) ([09fb4dc](https://github.com/FruitieX/irc-sitz-rs/commit/09fb4dcb63f40c6cd457f3459fc5806ab8d554dc))
+* **deps:** update rust crate reqwest to v0.12.18 ([#152](https://github.com/FruitieX/irc-sitz-rs/issues/152)) ([3863cf0](https://github.com/FruitieX/irc-sitz-rs/commit/3863cf0e2aa0a62004c717e0dc43b4b2bd49aa7d))
+* **deps:** update rust crate reqwest to v0.12.19 ([#153](https://github.com/FruitieX/irc-sitz-rs/issues/153)) ([67324bf](https://github.com/FruitieX/irc-sitz-rs/commit/67324bf620adc289f940af68cc2b9c07c9598819))
+* **deps:** update rust crate reqwest to v0.12.20 ([#156](https://github.com/FruitieX/irc-sitz-rs/issues/156)) ([307ef1c](https://github.com/FruitieX/irc-sitz-rs/commit/307ef1cafa79dd0d07b97b2eba41effb84c68383))
+* **deps:** update rust crate scraper to v0.23.1 ([#94](https://github.com/FruitieX/irc-sitz-rs/issues/94)) ([1f15b33](https://github.com/FruitieX/irc-sitz-rs/commit/1f15b33ca9e591b4767b0613a5a4f129ac718b6f))
+* **deps:** update rust crate serde to v1.0.218 ([#90](https://github.com/FruitieX/irc-sitz-rs/issues/90)) ([1714561](https://github.com/FruitieX/irc-sitz-rs/commit/17145614182f5f8fea988d0110e369a04367a2df))
+* **deps:** update rust crate serde to v1.0.219 ([#107](https://github.com/FruitieX/irc-sitz-rs/issues/107)) ([40b92f6](https://github.com/FruitieX/irc-sitz-rs/commit/40b92f656f830c4e3b9982f1db75c621c29d16a0))
+* **deps:** update rust crate serde_json to v1.0.136 ([#72](https://github.com/FruitieX/irc-sitz-rs/issues/72)) ([b111a94](https://github.com/FruitieX/irc-sitz-rs/commit/b111a94dd62fb4163faa97987dfa2d801089c735))
+* **deps:** update rust crate serde_json to v1.0.137 ([#74](https://github.com/FruitieX/irc-sitz-rs/issues/74)) ([667d06c](https://github.com/FruitieX/irc-sitz-rs/commit/667d06c76842a00bfc62695c67f38b96f57ed47d))
+* **deps:** update rust crate serde_json to v1.0.138 ([#78](https://github.com/FruitieX/irc-sitz-rs/issues/78)) ([985ac63](https://github.com/FruitieX/irc-sitz-rs/commit/985ac63c6c5e0e98b869c3c5de72e0780c3b75d2))
+* **deps:** update rust crate serde_json to v1.0.139 ([#89](https://github.com/FruitieX/irc-sitz-rs/issues/89)) ([7aaa547](https://github.com/FruitieX/irc-sitz-rs/commit/7aaa547452759b747b9d1fef04ade693bbfc77f6))
+* **deps:** update rust crate serde_json to v1.0.140 ([#102](https://github.com/FruitieX/irc-sitz-rs/issues/102)) ([edfbb65](https://github.com/FruitieX/irc-sitz-rs/commit/edfbb65d5f7b28eb8691d719b62821355928cae7))
+* **deps:** update rust crate tokio to v1.44.0 ([#106](https://github.com/FruitieX/irc-sitz-rs/issues/106)) ([960ddea](https://github.com/FruitieX/irc-sitz-rs/commit/960ddea09e6a9cb76f637178f97c798e855f8a11))
+* **deps:** update rust crate tokio to v1.44.1 ([#111](https://github.com/FruitieX/irc-sitz-rs/issues/111)) ([7926149](https://github.com/FruitieX/irc-sitz-rs/commit/79261495bb495265a854bd3374bda1bc1ec33b6f))
+* **deps:** update rust crate tokio to v1.44.2 ([#124](https://github.com/FruitieX/irc-sitz-rs/issues/124)) ([45e5452](https://github.com/FruitieX/irc-sitz-rs/commit/45e5452c655b054c14d11cbac2b18aeba8800fbb))
+* **deps:** update rust crate tokio to v1.45.0 ([#140](https://github.com/FruitieX/irc-sitz-rs/issues/140)) ([5b05bac](https://github.com/FruitieX/irc-sitz-rs/commit/5b05bac9dd6bfed6e4ff54b86677ff23647e8c89))
+* **deps:** update rust crate tokio to v1.45.1 ([#148](https://github.com/FruitieX/irc-sitz-rs/issues/148)) ([ed12674](https://github.com/FruitieX/irc-sitz-rs/commit/ed126749ee5c074775f6847477e64a81cd465b58))
+* **deps:** update rust crate tokio-util to v0.7.14 ([#112](https://github.com/FruitieX/irc-sitz-rs/issues/112)) ([5602b8b](https://github.com/FruitieX/irc-sitz-rs/commit/5602b8b5eeabb77cba67d598d8ef7c2065761052))
+* **deps:** update rust crate tokio-util to v0.7.15 ([#131](https://github.com/FruitieX/irc-sitz-rs/issues/131)) ([a56d893](https://github.com/FruitieX/irc-sitz-rs/commit/a56d893404c7673bb14150dcb037d3d048cf773b))
+* **deps:** update rust crate toml to v0.8.20 ([#84](https://github.com/FruitieX/irc-sitz-rs/issues/84)) ([0799135](https://github.com/FruitieX/irc-sitz-rs/commit/07991357b8f396101bb70840bdcd60a497f86dbc))
+* **deps:** update rust crate toml to v0.8.21 ([#133](https://github.com/FruitieX/irc-sitz-rs/issues/133)) ([6bdc13f](https://github.com/FruitieX/irc-sitz-rs/commit/6bdc13f70d92694af0a543a0b6bac17cc4a63167))
+* **deps:** update rust crate toml to v0.8.22 ([#135](https://github.com/FruitieX/irc-sitz-rs/issues/135)) ([2d61bed](https://github.com/FruitieX/irc-sitz-rs/commit/2d61bedacc46c3c581eca5f770ef801c03c74d10))
+* **deps:** update rust crate toml to v0.8.23 ([#154](https://github.com/FruitieX/irc-sitz-rs/issues/154)) ([144ee74](https://github.com/FruitieX/irc-sitz-rs/commit/144ee74e83a4946f6443034e8bf21b6a5e48d46c))
+
 ## 2.0.0 (2025-01-15)
 
 
