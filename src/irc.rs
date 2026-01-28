@@ -1,5 +1,6 @@
 use crate::{
     event::{Event, EventBus},
+    message::{MessageAction, Platform},
     mixer::MixerAction,
     playback::{PlaybackAction, MAX_SONG_DURATION},
     songbook::SongbookSong,
@@ -13,6 +14,7 @@ use irc::client::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use tokio::time::sleep;
 
 /// Initial delay before first reconnection attempt
 const RECONNECT_INITIAL_DELAY: Duration = Duration::from_secs(1);
@@ -20,6 +22,8 @@ const RECONNECT_INITIAL_DELAY: Duration = Duration::from_secs(1);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30); // 30 seconds
 /// Multiplier for exponential backoff
 const RECONNECT_BACKOFF_MULTIPLIER: u32 = 2;
+/// Anti-flood delay between messages
+const ANTI_FLOOD_DELAY: Duration = Duration::from_millis(1200);
 
 #[derive(Clone, Debug)]
 pub enum IrcAction {
@@ -144,12 +148,26 @@ async fn connect_and_run(
 
                 // Process message in a separate task to avoid blocking the stream
                 tokio::spawn(async move {
+                    // Only process messages from the target channel
+                    if target != Some(irc_channel) {
+                        return;
+                    }
+
+                    // Try to parse as a command
                     let action = message_to_action(&message, &config).await;
 
-                    // Dispatch if msg resulted in action and msg is from target irc_channel
                     if let Some(action) = action {
-                        if target == Some(irc_channel) {
-                            bus.send(action);
+                        bus.send(action);
+                    } else {
+                        // If not a command, mirror to other platforms
+                        if let Command::PRIVMSG(_channel, text) = &message.command {
+                            if let Some(nick) = message.source_nickname() {
+                                bus.send_message(MessageAction::Mirror {
+                                    username: nick.to_string(),
+                                    text: text.clone(),
+                                    source: Platform::Irc,
+                                });
+                            }
                         }
                     }
                 });
@@ -179,21 +197,76 @@ fn start_outgoing_message_handler(
         loop {
             let event = bus_rx.recv().await;
 
-            if let Event::Irc(IrcAction::SendMsg(msg)) = event {
-                let state = connection_state.read().await;
-
-                if let Some(sender) = &state.sender {
-                    let result = sender.send_privmsg(&irc_channel, &msg);
-
-                    if let Err(e) = result {
-                        error!("Error while sending IRC message: {:?}", e);
+            // Handle platform-agnostic Message events
+            if let Event::Message(action) = event {
+                match action {
+                    MessageAction::Send { text, source, .. } => {
+                        // Don't echo messages back to IRC if they came from IRC
+                        if source == Platform::Irc {
+                            continue;
+                        }
+                        send_multiline_message(&text, &irc_channel, &connection_state).await;
                     }
-                } else {
-                    warn!("Cannot send IRC message - not connected: {}", msg);
+                    MessageAction::Mirror {
+                        username,
+                        text,
+                        source,
+                    } => {
+                        // Only mirror messages from other platforms to IRC
+                        if source != Platform::Irc {
+                            let msg = format!(
+                                "<{source}:{username}> {text}",
+                                source = match source {
+                                    #[cfg(feature = "discord")]
+                                    Platform::Discord => "discord",
+                                    Platform::Bot => "bot",
+                                    Platform::Irc => unreachable!(),
+                                }
+                            );
+                            send_message(&msg, &irc_channel, &connection_state).await;
+                        }
+                    }
+                    #[cfg(feature = "discord")]
+                    MessageAction::StoreBingoMessageId { .. } => {}
                 }
+            }
+            // Keep handling legacy IrcAction events for backwards compatibility
+            else if let Event::Irc(IrcAction::SendMsg(msg)) = event {
+                send_message(&msg, &irc_channel, &connection_state).await;
             }
         }
     });
+}
+
+async fn send_message(
+    msg: &str,
+    irc_channel: &str,
+    connection_state: &Arc<RwLock<IrcConnectionState>>,
+) {
+    let state = connection_state.read().await;
+
+    if let Some(sender) = &state.sender {
+        let result = sender.send_privmsg(irc_channel, msg);
+
+        if let Err(e) = result {
+            error!("Error while sending IRC message: {:?}", e);
+        }
+    } else {
+        warn!("Cannot send IRC message - not connected: {}", msg);
+    }
+}
+
+async fn send_multiline_message(
+    msg: &str,
+    irc_channel: &str,
+    connection_state: &Arc<RwLock<IrcConnectionState>>,
+) {
+    for line in msg.lines() {
+        if !line.is_empty() {
+            send_message(line, irc_channel, connection_state).await;
+            sleep(ANTI_FLOOD_DELAY).await;
+        }
+    }
 }
 
 async fn message_to_action(message: &Message, config: &crate::config::Config) -> Option<Event> {

@@ -3,3 +3,8 @@ server = "port80a.se.quakenet.org"
 channel = "#bot-test-channel"
 songbook_url = "https://songbook.example.com"
 songbook_re = "https://(songbook|xn--sngbok-iua|sangbok|sångbok).example.com/(.+)"
+
+# Discord configuration (optional, requires --features discord)
+# discord_token = "your-bot-token-here"
+# discord_channel_id = 123456789012345678
+# discord_guild_id = 123456789012345678

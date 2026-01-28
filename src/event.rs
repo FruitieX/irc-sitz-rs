@@ -1,4 +1,5 @@
 use crate::irc::IrcAction;
+use crate::message::{MessageAction, Platform};
 use crate::playback::PlaybackAction;
 use crate::songleader::SongleaderAction;
 use crate::{
@@ -28,6 +29,20 @@ impl EventBus {
 
     pub fn subscribe(&self) -> Subscriber {
         Subscriber::new(self.tx.subscribe())
+    }
+
+    /// Convenience method for sending a message to all platforms
+    pub fn send_message(&self, action: MessageAction) {
+        self.send(Event::Message(action));
+    }
+
+    /// Convenience method for sending a simple text message to all platforms
+    pub fn say(&self, text: impl Into<String>) {
+        self.send_message(MessageAction::Send {
+            text: text.into(),
+            rich: None,
+            source: Platform::Bot,
+        });
     }
 }
 
@@ -71,6 +86,8 @@ pub enum Event {
     Playback(PlaybackAction),
     Irc(IrcAction),
     Songleader(SongleaderAction),
+    /// Platform-agnostic message events
+    Message(MessageAction),
 }
 
 pub fn debug(bus: &EventBus) {

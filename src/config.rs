@@ -19,6 +19,19 @@ pub struct SongbookConfig {
     pub songbook_re: Regex,
 }
 
+#[cfg(feature = "discord")]
+#[derive(Clone, Deserialize, Serialize)]
+pub struct DiscordConfig {
+    /// Discord bot token
+    pub discord_token: String,
+
+    /// Channel ID for the bot to operate in
+    pub discord_channel_id: u64,
+
+    /// Guild (server) ID for registering slash commands
+    pub discord_guild_id: u64,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Config {
     #[serde(flatten)]
@@ -26,6 +39,10 @@ pub struct Config {
 
     #[serde(flatten)]
     pub songbook: SongbookConfig,
+
+    #[cfg(feature = "discord")]
+    #[serde(flatten)]
+    pub discord: Option<DiscordConfig>,
 }
 
 pub async fn load() -> Result<Config> {

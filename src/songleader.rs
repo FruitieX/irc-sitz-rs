@@ -1,7 +1,7 @@
 use crate::{
     config::Config,
     event::{Event, EventBus},
-    irc::IrcAction,
+    message::{CountdownValue, MessageAction, RichContent},
     playback::PlaybackAction,
     songbook::{self, SongbookSong},
     sources::espeak::{Priority, TextToSpeechAction},
@@ -295,10 +295,14 @@ impl Songleader {
             }));
     }
 
-    /// Convenience method for sending irc messages
-    fn irc_say(&self, msg: &str) {
-        self.bus
-            .send(Event::Irc(IrcAction::SendMsg(msg.to_string())));
+    /// Convenience method for sending messages to all platforms
+    fn say(&self, msg: &str) {
+        self.bus.say(msg);
+    }
+
+    /// Convenience method for sending rich messages to all platforms
+    fn say_rich(&self, text: &str, rich: RichContent) {
+        self.bus.send_message(MessageAction::rich(text, rich));
     }
 
     /// Convenience method for (dis)allowing music playback
@@ -321,10 +325,10 @@ impl Songleader {
         }
     }
 
-    /// Convenience method for sending the same message to tts and irc
-    fn tts_and_irc_say(&self, text: &str) {
+    /// Convenience method for sending the same message to tts and all chat platforms
+    fn tts_and_say(&self, text: &str) {
         self.tts_say(text);
-        self.irc_say(text);
+        self.say(text);
     }
 
     /// Begins the party, must be called from [Mode::Inactive] and sets
@@ -397,22 +401,22 @@ Have fun, and don't drown in the shower!
         );
 
         for line in welcome_text.split('\n') {
-            self.irc_say(line);
+            self.say(line);
             sleep(ANTI_FLOOD_DELAY).await;
         }
 
         sleep(3 * SECOND).await;
 
-        self.irc_say("*sjunger:*");
+        self.say("*sjunger:*");
 
-        self.tts_and_irc_say("En liten fågel satt en gång, och sjöng i furuskog.");
+        self.tts_and_say("En liten fågel satt en gång, och sjöng i furuskog.");
         sleep(4 * SECOND).await;
-        self.tts_and_irc_say("Han hade sjungit dagen lång, men dock ej sjungit nog.");
+        self.tts_and_say("Han hade sjungit dagen lång, men dock ej sjungit nog.");
         sleep(4 * SECOND).await;
-        self.tts_and_irc_say("Vad sjöng den lilla fågeln då? JO!");
+        self.tts_and_say("Vad sjöng den lilla fågeln då? JO!");
         sleep(3 * SECOND).await;
 
-        self.irc_say("Helan går...");
+        self.say("Helan går...");
         self.tts_say("Helan går");
 
         // NOTE: Call set_mode() directly instead of enter_singing_mode() to
@@ -454,16 +458,19 @@ Have fun, and don't drown in the shower!
 
                 self.tts_say(&format!("Nästa sång kommer nu... {song}"));
 
-                if let Some(url) = &song.url {
-                    self.irc_say(&format!("Next song coming up: {song}. {}", url));
+                let text = if let Some(url) = &song.url {
+                    format!("Next song coming up: {song}. {url}")
                 } else {
-                    self.irc_say(&format!("Next song coming up: {song}"));
-                }
+                    format!("Next song coming up: {song}")
+                };
 
-                self.irc_say("Type bingo when you have found it!")
+                self.say_rich(
+                    &format!("{text}\nType bingo when you have found it!"),
+                    RichContent::BingoAnnouncement { song },
+                );
             }
             None => {
-                self.irc_say("No songs found :(, add more songs: !request <url>");
+                self.say("No songs found :(, add more songs: !request <url>");
                 self.enter_tempo_mode();
             }
         }
@@ -476,13 +483,33 @@ Have fun, and don't drown in the shower!
         self.allow_low_prio_speech(false);
 
         self.tts_say("PLING PLONG");
-        self.irc_say("Song starts in 3");
+        self.say_rich(
+            "Song starts in 3",
+            RichContent::Countdown {
+                value: CountdownValue::Three,
+            },
+        );
         sleep(SECOND).await;
-        self.irc_say("2");
+        self.say_rich(
+            "2",
+            RichContent::Countdown {
+                value: CountdownValue::Two,
+            },
+        );
         sleep(SECOND).await;
-        self.irc_say("1");
+        self.say_rich(
+            "1",
+            RichContent::Countdown {
+                value: CountdownValue::One,
+            },
+        );
         sleep(SECOND).await;
-        self.irc_say("NOW!");
+        self.say_rich(
+            "NOW!",
+            RichContent::Countdown {
+                value: CountdownValue::Now,
+            },
+        );
     }
 
     /// Ends the party
@@ -492,7 +519,7 @@ Have fun, and don't drown in the shower!
             return;
         }
 
-        self.irc_say("Party is over. go drunk, you are home....");
+        self.say("Party is over. go drunk, you are home....");
         self.enter_inactive_mode();
     }
 }
@@ -546,7 +573,7 @@ fn handle_incoming_event_loop(bus: EventBus, config: Config, songleader: Arc<RwL
 
 /// Decide what to do based on the incoming event
 async fn handle_incoming_event(
-    bus: EventBus,
+    _bus: EventBus,
     config: Config,
     songleader_rwlock: Arc<RwLock<Songleader>>,
     action: SongleaderAction,
@@ -564,8 +591,11 @@ async fn handle_incoming_event(
             let result = song.and_then(|song| songleader.state.add_request(song));
 
             match result {
-                Ok(song) => songleader.irc_say(&format!("Added {song} to requests")),
-                Err(e) => songleader.irc_say(&format!("Error while requesting song: {:?}", e)),
+                Ok(song) => songleader.say_rich(
+                    &format!("Added {song} to requests"),
+                    RichContent::SongRequestAdded { song },
+                ),
+                Err(e) => songleader.say(&format!("Error while requesting song: {e:?}")),
             }
         }
 
@@ -573,8 +603,11 @@ async fn handle_incoming_event(
             let result = songleader.state.add_request(song);
 
             match result {
-                Ok(song) => songleader.irc_say(&format!("Added {song} to requests")),
-                Err(e) => songleader.irc_say(&format!("Error while requesting song: {:?}", e)),
+                Ok(song) => songleader.say_rich(
+                    &format!("Added {song} to requests"),
+                    RichContent::SongRequestAdded { song },
+                ),
+                Err(e) => songleader.say(&format!("Error while requesting song: {e:?}")),
             }
         }
 
@@ -582,8 +615,14 @@ async fn handle_incoming_event(
             let result = songleader.state.rm_song_by_id(id);
 
             match result {
-                Ok(song) => songleader.irc_say(&format!("Removed {song} from requests")),
-                Err(e) => songleader.irc_say(&format!("Error while removing song: {:?}", e)),
+                Ok(song) => {
+                    let title = song.title.clone().unwrap_or_else(|| song.id.clone());
+                    songleader.say_rich(
+                        &format!("Removed {song} from requests"),
+                        RichContent::SongRemoved { title },
+                    );
+                }
+                Err(e) => songleader.say(&format!("Error while removing song: {e:?}")),
             }
         }
 
@@ -591,8 +630,14 @@ async fn handle_incoming_event(
             let result = songleader.state.rm_song_by_nick(nick);
 
             match result {
-                Ok(song) => songleader.irc_say(&format!("Removed {song} from requests")),
-                Err(e) => songleader.irc_say(&format!("Error while removing song: {:?}", e)),
+                Ok(song) => {
+                    let title = song.title.clone().unwrap_or_else(|| song.id.clone());
+                    songleader.say_rich(
+                        &format!("Removed {song} from requests"),
+                        RichContent::SongRemoved { title },
+                    );
+                }
+                Err(e) => songleader.say(&format!("Error while removing song: {e:?}")),
             }
         }
 
@@ -636,7 +681,7 @@ async fn handle_incoming_event(
                     .collect();
                 format!("Song requests: {}", songs_str.join(", "))
             };
-            songleader.irc_say(&msg);
+            songleader.say_rich(&msg, RichContent::SongRequestList { songs });
         }
         SongleaderAction::ForceTempo => songleader.enter_tempo_mode(),
         SongleaderAction::ForceBingo => songleader.enter_bingo_mode(),
@@ -650,21 +695,14 @@ async fn handle_incoming_event(
                 return;
             }
 
-            // Avoid blocking current task by spawning a new one to
-            // flood the help text
-            let bus = bus.clone();
-            let songbook_url = config.songbook.songbook_url;
-            tokio::spawn(async move {
-                let help_text = HELP_TEXT.replace(
+            let songbook_url = config.songbook.songbook_url.clone();
+            songleader.say_rich(
+                &HELP_TEXT.replace(
                     "songbook-url",
                     &format!("{songbook_url}/tf-sangbok-150-teknologvisan"),
-                );
-
-                for line in help_text.split('\n') {
-                    bus.send(Event::Irc(IrcAction::SendMsg(line.to_string())));
-                    sleep(ANTI_FLOOD_DELAY).await;
-                }
-            });
+                ),
+                RichContent::Help { songbook_url },
+            );
         }
     }
 }

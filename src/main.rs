@@ -6,6 +6,7 @@ mod config;
 mod constants;
 mod event;
 mod irc;
+mod message;
 mod mixer;
 mod net;
 mod playback;
@@ -14,6 +15,9 @@ mod songleader;
 mod sources;
 mod stdin;
 mod youtube;
+
+#[cfg(feature = "discord")]
+mod discord;
 
 // Test modules
 #[cfg(test)]
@@ -55,6 +59,11 @@ async fn main() -> anyhow::Result<()> {
     songleader::init(&bus, &config).await;
     net::init(mixer_output);
     event::debug(&bus);
+
+    #[cfg(feature = "discord")]
+    if let Some(ref discord_config) = config.discord {
+        discord::init(&bus, &config, discord_config).await?;
+    }
 
     // stdin::init(&bus);
     tokio::signal::ctrl_c().await?;

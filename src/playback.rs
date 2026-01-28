@@ -1,6 +1,6 @@
 use crate::{
     event::{Event, EventBus},
-    irc::IrcAction,
+    message::{MessageAction, NowPlayingInfo, RichContent},
     sources::symphonia::SymphoniaAction,
 };
 use serde::{Deserialize, Serialize};
@@ -163,10 +163,14 @@ impl Playback {
         playback
     }
 
-    /// Convenience method for sending irc messages
-    fn irc_say(&self, msg: &str) {
-        self.bus
-            .send(Event::Irc(IrcAction::SendMsg(msg.to_string())));
+    /// Convenience method for sending messages to all platforms
+    fn say(&self, msg: &str) {
+        self.bus.say(msg);
+    }
+
+    /// Convenience method for sending rich messages to all platforms
+    fn say_rich(&self, text: &str, rich: RichContent) {
+        self.bus.send_message(MessageAction::rich(text, rich));
     }
 
     fn queue_len(&self) -> usize {
@@ -185,7 +189,7 @@ impl Playback {
 
     fn enqueue(&mut self, song: Song) {
         if self.state.queued_songs.contains(&song) {
-            self.irc_say("Song already in queue!");
+            self.say("Song already in queue!");
         } else {
             let queue_was_empty = self.state.queued_songs.is_empty();
             let time_until_playback = self.queue_duration_mins();
@@ -195,7 +199,13 @@ impl Playback {
                 "Added {} ({}) to the queue. Time until playback: {} min",
                 song.title, song.url, time_until_playback
             );
-            self.irc_say(&msg);
+            self.say_rich(
+                &msg,
+                RichContent::SongEnqueued {
+                    song: song.clone(),
+                    time_until_playback_mins: time_until_playback,
+                },
+            );
 
             if !self.state.is_playing && self.state.should_play && queue_was_empty {
                 self.play_song(song)
@@ -245,7 +255,22 @@ impl Playback {
             format!("{state} ({progress}): {np_formatted}, next up: {next_formatted}. Queue length: {len} songs ({duration_min} min)")
         };
 
-        self.irc_say(&msg);
+        let now_playing = np.cloned().map(|song| NowPlayingInfo {
+            song,
+            progress_secs: self.state.playback_progress,
+        });
+        let next_up = self.state.queued_songs.get(1).cloned();
+
+        self.say_rich(
+            &msg,
+            RichContent::QueueStatus {
+                now_playing,
+                next_up,
+                queue_length: len,
+                queue_duration_mins: duration_min,
+                is_playing: self.state.is_playing,
+            },
+        );
     }
 
     fn rm_song_at_pos(&mut self, pos: usize) {
@@ -260,8 +285,11 @@ impl Playback {
         };
 
         match song {
-            Some(song) => self.irc_say(&format!("Removed song {} from the queue", song.title)),
-            None => self.irc_say(&format!("No song at position {pos} in the queue")),
+            Some(song) => self.say_rich(
+                &format!("Removed song {} from the queue", song.title),
+                RichContent::SongRemoved { title: song.title },
+            ),
+            None => self.say(&format!("No song at position {pos} in the queue")),
         }
     }
 
@@ -283,8 +311,11 @@ impl Playback {
         };
 
         match song {
-            Some(song) => self.irc_say(&format!("Removed song {} from the queue", song.title)),
-            None => self.irc_say(&format!("No songs queued by {nick}")),
+            Some(song) => self.say_rich(
+                &format!("Removed song {} from the queue", song.title),
+                RichContent::SongRemoved { title: song.title },
+            ),
+            None => self.say(&format!("No songs queued by {nick}")),
         }
     }
 
@@ -306,7 +337,7 @@ impl Playback {
 
         self.bus.send(Event::Symphonia(SymphoniaAction::Stop));
 
-        self.irc_say("Playback queue ended.");
+        self.say("Playback queue ended.");
         self.state.persist()
     }
 
