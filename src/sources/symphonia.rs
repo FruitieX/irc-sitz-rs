@@ -167,28 +167,26 @@ fn start_emit_sample_loop(
     tokio::spawn(async move {
         let mut last_sent_position = 0;
         loop {
-            let (sample, decoder_hit_eof) = {
+            // Single lock acquisition to get all needed data at once
+            // This eliminates the duplicate lock acquisitions that were causing inefficiency
+            let (sample, decoder_hit_eof, position) = {
                 let mut playback_buf = playback_buf.lock().await;
-                (playback_buf.next_sample(), playback_buf.is_eof())
+                let sample = playback_buf.next_sample();
+                let eof = playback_buf.is_eof();
+                let pos = playback_buf.get_position_secs(SAMPLE_RATE) as u64;
+                (sample, eof, pos)
             };
 
             if sample.is_none() && decoder_hit_eof {
+                // Need to acquire lock again only for the clear operation
                 let mut playback_buf = playback_buf.lock().await;
                 playback_buf.clear();
-                bus.send(Event::Playback(PlaybackAction::EndOfSong))
-            } else {
-                let position = {
-                    let playback_buf = playback_buf.lock().await;
-                    playback_buf.get_position_secs(SAMPLE_RATE) as u64
-                };
-
-                if position != last_sent_position {
-                    last_sent_position = position;
-
-                    bus.send(Event::Playback(PlaybackAction::PlaybackProgress {
-                        position,
-                    }))
-                }
+                bus.send(Event::Playback(PlaybackAction::EndOfSong));
+            } else if position != last_sent_position {
+                last_sent_position = position;
+                bus.send(Event::Playback(PlaybackAction::PlaybackProgress {
+                    position,
+                }));
             }
 
             tx.send(sample.unwrap_or_default())

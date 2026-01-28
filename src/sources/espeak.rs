@@ -276,11 +276,11 @@ mod espeakng_sys_example {
     }
 
     trait PoisonlessLock<T> {
-        fn plock(&self) -> MutexGuard<T>;
+        fn plock(&self) -> MutexGuard<'_, T>;
     }
 
     impl<T> PoisonlessLock<T> for Mutex<T> {
-        fn plock(&self) -> MutexGuard<T> {
+        fn plock(&self) -> MutexGuard<'_, T> {
             match self.lock() {
                 Ok(l) => l,
                 Err(e) => e.into_inner(),

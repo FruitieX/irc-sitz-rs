@@ -20,6 +20,7 @@ use tokio::{
 };
 
 const SONGLEADER_STATE_FILE: &str = "songleader_state.json";
+const SONGLEADER_STATE_FILE_TMP: &str = "songleader_state.json.tmp";
 const NUM_TEMPO_NICKS: usize = 3;
 const NUM_BINGO_NICKS: usize = 3;
 const ANTI_FLOOD_DELAY: Duration = Duration::from_millis(1200);
@@ -124,16 +125,16 @@ pub enum Mode {
 #[derive(Default, Debug, Deserialize, Serialize)]
 pub struct SongleaderState {
     /// List of songs that the songleader will sing first
-    first_songs: VecDeque<SongbookSong>,
+    pub first_songs: VecDeque<SongbookSong>,
 
     /// List of all song requests
-    requests: Vec<SongbookSong>,
+    pub requests: Vec<SongbookSong>,
 
     /// List of backup songs in case the requests run out
-    backup: Vec<SongbookSong>,
+    pub backup: Vec<SongbookSong>,
 
     /// Current mode of the songleader
-    mode: Mode,
+    pub mode: Mode,
 }
 
 impl SongleaderState {
@@ -150,22 +151,33 @@ impl SongleaderState {
         }
     }
 
+    /// Persists state to disk using atomic write (write to temp file, then rename).
+    /// This prevents corruption if the process crashes during write.
     fn persist(&self) {
-        let json = serde_json::to_string_pretty(self);
-        match json {
-            Ok(json) => {
-                tokio::spawn(async move {
-                    let res = tokio::fs::write(SONGLEADER_STATE_FILE, json).await;
-
-                    if let Err(e) = res {
-                        error!("Error while writing songleader state: {:?}", e);
-                    }
-                });
-            }
+        let json = match serde_json::to_string_pretty(self) {
+            Ok(json) => json,
             Err(e) => {
-                error!("Error while serializing songleader state: {:?}", e)
+                error!("Error while serializing songleader state: {:?}", e);
+                return;
             }
-        }
+        };
+
+        // Spawn a task to perform the atomic write
+        tokio::spawn(async move {
+            // Write to temp file first
+            if let Err(e) = tokio::fs::write(SONGLEADER_STATE_FILE_TMP, &json).await {
+                error!("Error while writing songleader state to temp file: {:?}", e);
+                return;
+            }
+
+            // Atomically rename temp file to actual file
+            // This ensures we never have a partially written state file
+            if let Err(e) =
+                tokio::fs::rename(SONGLEADER_STATE_FILE_TMP, SONGLEADER_STATE_FILE).await
+            {
+                error!("Error while renaming songleader state file: {:?}", e);
+            }
+        });
     }
 
     pub fn get_songs(&self) -> Vec<SongbookSong> {
@@ -178,7 +190,7 @@ impl SongleaderState {
         songs
     }
 
-    fn add_request(&mut self, song: SongbookSong) -> Result<SongbookSong> {
+    pub fn add_request(&mut self, song: SongbookSong) -> Result<SongbookSong> {
         let songs = self.get_songs();
 
         if songs.contains(&song) {
@@ -196,7 +208,7 @@ impl SongleaderState {
         Ok(song)
     }
 
-    fn rm_song_by_id(&mut self, id: String) -> Result<SongbookSong> {
+    pub fn rm_song_by_id(&mut self, id: String) -> Result<SongbookSong> {
         let index = self
             .requests
             .iter()
@@ -209,7 +221,7 @@ impl SongleaderState {
         Ok(song)
     }
 
-    fn rm_song_by_nick(&mut self, nick: String) -> Result<SongbookSong> {
+    pub fn rm_song_by_nick(&mut self, nick: String) -> Result<SongbookSong> {
         let index = self
             .requests
             .iter()
@@ -228,12 +240,12 @@ impl SongleaderState {
         }
 
         if !self.requests.is_empty() {
-            let index = rand::thread_rng().gen_range(0..self.requests.len());
+            let index = rand::rng().random_range(0..self.requests.len());
             return Some(self.requests.remove(index));
         }
 
         if !self.backup.is_empty() {
-            let index = rand::thread_rng().gen_range(0..self.backup.len());
+            let index = rand::rng().random_range(0..self.backup.len());
             return Some(self.backup.remove(index));
         }
 

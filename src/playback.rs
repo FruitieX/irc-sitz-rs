@@ -8,6 +8,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 
 const PLAYBACK_STATE_FILE: &str = "playback_state.json";
+const PLAYBACK_STATE_FILE_TMP: &str = "playback_state.json.tmp";
 pub const MAX_SONG_DURATION: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -107,23 +108,31 @@ impl PlaybackState {
         }
     }
 
+    /// Persists state to disk using atomic write (write to temp file, then rename).
+    /// This prevents corruption if the process crashes during write.
     fn persist(&self) {
-        let json = serde_json::to_string_pretty(&self);
-
-        match json {
-            Ok(json) => {
-                tokio::spawn(async move {
-                    let res = tokio::fs::write(PLAYBACK_STATE_FILE, json).await;
-
-                    if let Err(e) = res {
-                        error!("Error while writing state to disk: {:?}", e);
-                    }
-                });
-            }
+        let json = match serde_json::to_string_pretty(&self) {
+            Ok(json) => json,
             Err(e) => {
                 error!("Error while serializing playback state: {:?}", e);
+                return;
             }
-        }
+        };
+
+        // Spawn a task to perform the atomic write
+        tokio::spawn(async move {
+            // Write to temp file first
+            if let Err(e) = tokio::fs::write(PLAYBACK_STATE_FILE_TMP, &json).await {
+                error!("Error while writing playback state to temp file: {:?}", e);
+                return;
+            }
+
+            // Atomically rename temp file to actual file
+            // This ensures we never have a partially written state file
+            if let Err(e) = tokio::fs::rename(PLAYBACK_STATE_FILE_TMP, PLAYBACK_STATE_FILE).await {
+                error!("Error while renaming playback state file: {:?}", e);
+            }
+        });
     }
 }
 

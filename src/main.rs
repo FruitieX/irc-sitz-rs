@@ -15,6 +15,18 @@ mod sources;
 mod stdin;
 mod youtube;
 
+// Test modules
+#[cfg(test)]
+mod buffer_tests;
+#[cfg(test)]
+mod event_tests;
+#[cfg(test)]
+mod playback_tests;
+#[cfg(test)]
+mod songbook_tests;
+#[cfg(test)]
+mod songleader_tests;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     pretty_env_logger::init_timed();

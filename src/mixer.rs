@@ -5,7 +5,12 @@ use crate::{
 use anyhow::Result;
 use tokio::sync::{mpsc, watch};
 
+/// Number of audio samples to process per chunk.
+/// Smaller values reduce latency but increase CPU overhead.
 const TARGET_CHUNK_SIZE: usize = 128;
+
+/// Microseconds per second, used for timing calculations
+const MICROS_PER_SECOND: f64 = 1_000_000.0;
 
 #[derive(Clone, Debug)]
 pub enum MixerAction {
@@ -15,9 +20,25 @@ pub enum MixerAction {
     SetSecondaryChannelDuckedVolume(f64),
 }
 
+/// Volume multiplier for the primary audio channel (TTS/speech).
+/// Set above 1.0 to make speech louder than music.
 const PRIMARY_CHANNEL_VOLUME: f64 = 1.25;
+
+/// Default volume for secondary channels (music) during normal playback.
+/// Range: 0.0 (silent) to 1.0 (full volume).
 const INIT_SECONDARY_CHANNEL_VOLUME_TARGET: f64 = 0.75;
+
+/// Volume for secondary channels when "ducked" (during TTS playback).
+/// Lower than normal to make speech more audible over music.
 const INIT_SECONDARY_CHANNEL_VOLUME_TARGET_DUCKED: f64 = 0.2;
+
+/// Rate at which volume fades between current and target levels.
+/// Applied per-sample, so actual fade speed depends on sample rate.
+/// At 44100 Hz, this gives approximately 4.4 seconds for a full 0-1 transition.
+const VOLUME_FADE_RATE: f64 = 0.0001;
+
+/// Threshold below which volume is snapped to target to avoid endless tiny adjustments.
+const VOLUME_SNAP_THRESHOLD: f64 = 0.001;
 
 pub type Sample = (i16, i16);
 pub type MixerInput = mpsc::Receiver<Sample>;
@@ -59,7 +80,7 @@ pub fn init(bus: &EventBus, mut sources: Vec<MixerInput>) -> Result<MixerOutput>
             }
 
             let sleep_time = std::time::Duration::from_micros(
-                ((TARGET_CHUNK_SIZE as f64 / SAMPLE_RATE as f64) * 1_000_000.0) as u64,
+                ((TARGET_CHUNK_SIZE as f64 / SAMPLE_RATE as f64) * MICROS_PER_SECOND) as u64,
             );
 
             let expected_sent_samples =
@@ -82,13 +103,12 @@ pub fn init(bus: &EventBus, mut sources: Vec<MixerInput>) -> Result<MixerOutput>
                     target_secondary_volume - current_secondary_volume;
 
                 // Slowly fade secondary channels towards the target volume
-                let correction_rate = 0.0001;
-                if secondary_volume_delta.abs() < 0.001 {
+                if secondary_volume_delta.abs() < VOLUME_SNAP_THRESHOLD {
                     current_secondary_volume = target_secondary_volume;
                 } else if secondary_volume_delta.is_sign_positive() {
-                    current_secondary_volume += correction_rate;
+                    current_secondary_volume += VOLUME_FADE_RATE;
                 } else {
-                    current_secondary_volume -= correction_rate;
+                    current_secondary_volume -= VOLUME_FADE_RATE;
                 };
 
                 let mut first_source = true;
