@@ -1,35 +1,7 @@
-#[macro_use]
-extern crate log;
-
-mod buffer;
-mod config;
-mod constants;
-mod event;
-mod irc;
-mod message;
-mod mixer;
-mod net;
-mod playback;
-mod songbook;
-mod songleader;
-mod sources;
-mod stdin;
-mod youtube;
+use irc_sitz_rs::{config, event, irc, mixer, net, playback, songleader, sources, youtube};
 
 #[cfg(feature = "discord")]
-mod discord;
-
-// Test modules
-#[cfg(test)]
-mod buffer_tests;
-#[cfg(test)]
-mod event_tests;
-#[cfg(test)]
-mod playback_tests;
-#[cfg(test)]
-mod songbook_tests;
-#[cfg(test)]
-mod songleader_tests;
+use irc_sitz_rs::discord;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

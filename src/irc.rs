@@ -269,7 +269,9 @@ async fn send_multiline_message(
     }
 }
 
-async fn message_to_action(message: &Message, config: &crate::config::Config) -> Option<Event> {
+/// Parses an IRC message and returns the corresponding Event if it's a command.
+/// This function is public for testing purposes.
+pub async fn message_to_action(message: &Message, config: &crate::config::Config) -> Option<Event> {
     if let Command::PRIVMSG(_channel, text) = &message.command {
         let nick = message.source_nickname()?.to_string();
 
