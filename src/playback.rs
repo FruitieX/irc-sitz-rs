@@ -192,11 +192,21 @@ impl Playback {
 
     fn enqueue(&mut self, song: Song) {
         if self.state.queued_songs.contains(&song) {
+            info!("Rejecting duplicate song: {} ({})", song.title, song.id);
             self.say("Song already in queue!");
         } else {
             let queue_was_empty = self.state.queued_songs.is_empty();
             let time_until_playback = self.queue_duration_mins();
             self.state.queued_songs.push(song.clone());
+
+            info!(
+                "Enqueued song: {} ({}) by {}, queue size: {}, time until playback: {} min",
+                song.title,
+                song.id,
+                song.queued_by,
+                self.queue_len(),
+                time_until_playback
+            );
 
             let msg = format!(
                 "Added {} ({}) to the queue. Time until playback: {} min",
@@ -323,6 +333,14 @@ impl Playback {
     }
 
     fn play_song(&mut self, song: Song) {
+        info!(
+            "Playing song: {} ({}) - duration: {}:{:02}",
+            song.title,
+            song.id,
+            song.duration / 60,
+            song.duration % 60
+        );
+
         self.state.is_playing = true;
         self.state.song_loaded = true;
         self.state.playback_progress = 0;
@@ -336,6 +354,11 @@ impl Playback {
     }
 
     fn end_of_queue(&mut self) {
+        info!(
+            "Playback queue ended, {} songs played",
+            self.state.played_songs.len()
+        );
+
         self.state.is_playing = false;
 
         self.bus.send(Event::Symphonia(SymphoniaAction::Stop));
@@ -350,7 +373,10 @@ impl Playback {
             let song = self.state.queued_songs.remove(0);
 
             if !remove_current {
+                info!("Finished song: {} ({})", song.title, song.id);
                 self.state.played_songs.push(song);
+            } else {
+                info!("Skipped song: {} ({})", song.title, song.id);
             }
         }
 
@@ -370,9 +396,11 @@ impl Playback {
         let song = self.state.played_songs.pop();
 
         if let Some(song) = song {
+            info!("Going back to previous song: {} ({})", song.title, song.id);
             self.state.queued_songs.insert(0, song.clone());
             self.play_song(song);
         } else {
+            info!("No previous song available");
             self.end_of_queue()
         }
         self.state.persist()
@@ -412,6 +440,7 @@ async fn handle_incoming_event(action: PlaybackAction, playback: Arc<RwLock<Play
         PlaybackAction::RmSongByPos { pos } => playback.rm_song_at_pos(pos),
         PlaybackAction::RmSongByNick { nick } => playback.rm_latest_song_by_nick(nick),
         PlaybackAction::Play => {
+            info!("Playback resumed");
             playback.state.should_play = true;
 
             if playback.state.song_loaded {
@@ -428,6 +457,7 @@ async fn handle_incoming_event(action: PlaybackAction, playback: Arc<RwLock<Play
             playback.state.persist();
         }
         PlaybackAction::Pause => {
+            info!("Playback paused");
             playback.state.is_playing = false;
             playback.state.should_play = false;
 
@@ -436,6 +466,7 @@ async fn handle_incoming_event(action: PlaybackAction, playback: Arc<RwLock<Play
             playback.state.persist();
         }
         PlaybackAction::EndOfSong => {
+            info!("End of song signal received, advancing to next");
             playback.state.is_playing = false;
             playback.state.song_loaded = false;
             playback.next(false);

@@ -128,6 +128,8 @@ async fn handle_action(
     bus: EventBus,
     monitor_cancel: Arc<RwLock<Option<CancellationToken>>>,
 ) -> Result<()> {
+    info!("Symphonia action: {action:?}");
+
     match &action {
         SymphoniaAction::PlayFile { .. } | SymphoniaAction::PlayYtUrl { .. } => {
             // Cancel any existing monitor

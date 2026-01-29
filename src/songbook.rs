@@ -35,6 +35,8 @@ impl Display for SongbookSong {
 }
 
 pub async fn get_song_info(url: &str, config: &Config, queued_by: &str) -> Result<SongbookSong> {
+    info!("Fetching songbook info for: {url}");
+
     let url_matches = config.songbook.songbook_re.captures(url).with_context(|| {
         format!(
             "URL mismatch, try pasting a URL from {}",
@@ -73,6 +75,11 @@ pub async fn get_song_info(url: &str, config: &Config, queued_by: &str) -> Resul
         .next()
         .and_then(|element| element.text().next())
         .map(|text| text.to_string());
+
+    info!(
+        "Found songbook entry: {} (id: {id})",
+        title.as_deref().unwrap_or("<no title>")
+    );
 
     Ok(SongbookSong {
         url: Some(url.to_string()),

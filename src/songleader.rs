@@ -289,7 +289,7 @@ impl Songleader {
     /// Changes the [Mode] of the [SongleaderState] and writes new state to
     /// disk.
     fn set_mode(&mut self, mode: Mode) {
-        debug!("Transitioning to mode: {:?}", mode);
+        info!("Mode transition: {:?} -> {:?}", self.state.mode, mode);
 
         self.state.mode = mode;
         self.state.persist();
@@ -454,10 +454,16 @@ Have fun, and don't drown in the shower!
 
     /// Enters the [Mode::Bingo] mode
     pub fn enter_bingo_mode(&mut self) {
+        info!(
+            "Entering bingo mode - requests: {}, backup: {}",
+            self.state.requests.len(),
+            self.state.backup.len()
+        );
         let song = self.state.pop_next_song();
 
         match song {
             Some(song) => {
+                info!("Selected next song: {song}");
                 self.set_mode(Mode::Bingo {
                     nicks: HashSet::new(),
                     song: song.clone(),
@@ -479,6 +485,7 @@ Have fun, and don't drown in the shower!
                 );
             }
             None => {
+                info!("No songs available in queue");
                 self.say("No songs found :(, add more songs: !request <url>");
                 self.enter_tempo_mode();
             }
@@ -552,6 +559,11 @@ fn check_tempo_timeout_loop(songleader: Arc<RwLock<Songleader>>) {
                     *init_t + TEMPO_DEADLINE - TEMPO_DEADLINE_REDUCTION * nicks.len() as u32;
 
                 if Instant::now() > timeout {
+                    info!(
+                        "Tempo timeout reached after {:?} with {} tempo(s), auto-transitioning to bingo mode",
+                        init_t.elapsed(),
+                        nicks.len()
+                    );
                     songleader.enter_bingo_mode();
                 }
             }
@@ -591,6 +603,8 @@ pub async fn handle_incoming_event(
 
     match action {
         SongleaderAction::RequestSongUrl { url, queued_by } => {
+            info!("Processing song request URL from {queued_by}: {url}");
+
             // Don't hold onto the lock while fetching song info
             drop(songleader);
 
@@ -600,87 +614,160 @@ pub async fn handle_incoming_event(
             let result = song.and_then(|song| songleader.state.add_request(song));
 
             match result {
-                Ok(song) => songleader.say_rich(
-                    &format!("Added {song} to requests"),
-                    RichContent::SongRequestAdded { song },
-                ),
-                Err(e) => songleader.say(&format!("Error while requesting song: {e:?}")),
+                Ok(song) => {
+                    info!("Song request added: {song} (queued by {queued_by})");
+                    songleader.say_rich(
+                        &format!("Added {song} to requests"),
+                        RichContent::SongRequestAdded { song },
+                    );
+                }
+                Err(e) => {
+                    info!("Failed to add song request: {e:?}");
+                    songleader.say(&format!("Error while requesting song: {e:?}"));
+                }
             }
         }
 
         SongleaderAction::RequestSong { song } => {
+            info!("Processing direct song request: {song}");
             let result = songleader.state.add_request(song);
 
             match result {
-                Ok(song) => songleader.say_rich(
-                    &format!("Added {song} to requests"),
-                    RichContent::SongRequestAdded { song },
-                ),
-                Err(e) => songleader.say(&format!("Error while requesting song: {e:?}")),
+                Ok(song) => {
+                    info!("Song request added: {song}");
+                    songleader.say_rich(
+                        &format!("Added {song} to requests"),
+                        RichContent::SongRequestAdded { song },
+                    );
+                }
+                Err(e) => {
+                    info!("Failed to add song request: {e:?}");
+                    songleader.say(&format!("Error while requesting song: {e:?}"));
+                }
             }
         }
 
         SongleaderAction::RmSongById { id } => {
-            let result = songleader.state.rm_song_by_id(id);
+            info!("Processing song removal by id: {id}");
+            let result = songleader.state.rm_song_by_id(id.clone());
 
             match result {
                 Ok(song) => {
+                    info!("Song removed: {song}");
                     let title = song.title.clone().unwrap_or_else(|| song.id.clone());
                     songleader.say_rich(
                         &format!("Removed {song} from requests"),
                         RichContent::SongRemoved { title },
                     );
                 }
-                Err(e) => songleader.say(&format!("Error while removing song: {e:?}")),
+                Err(e) => {
+                    info!("Failed to remove song by id {id}: {e:?}");
+                    songleader.say(&format!("Error while removing song: {e:?}"));
+                }
             }
         }
 
         SongleaderAction::RmSongByNick { nick } => {
-            let result = songleader.state.rm_song_by_nick(nick);
+            info!("Processing song removal by nick: {nick}");
+            let result = songleader.state.rm_song_by_nick(nick.clone());
 
             match result {
                 Ok(song) => {
+                    info!("Song removed for {nick}: {song}");
                     let title = song.title.clone().unwrap_or_else(|| song.id.clone());
                     songleader.say_rich(
                         &format!("Removed {song} from requests"),
                         RichContent::SongRemoved { title },
                     );
                 }
-                Err(e) => songleader.say(&format!("Error while removing song: {e:?}")),
+                Err(e) => {
+                    info!("Failed to remove song by nick {nick}: {e:?}");
+                    songleader.say(&format!("Error while removing song: {e:?}"));
+                }
             }
         }
 
         SongleaderAction::Tempo { nick } => {
-            if let Mode::Tempo { nicks, .. } = &mut songleader.state.mode {
-                nicks.insert(nick);
+            if let Mode::Tempo { nicks, init_t } = &mut songleader.state.mode {
+                let is_new = nicks.insert(nick.clone());
+                let remaining = NUM_TEMPO_NICKS.saturating_sub(nicks.len());
+
+                if is_new {
+                    info!(
+                        "Got tempo by {nick}, have {count}/{required} (waiting for {remaining} more)",
+                        count = nicks.len(),
+                        required = NUM_TEMPO_NICKS
+                    );
+                } else {
+                    info!("Duplicate tempo by {nick}, ignoring");
+                }
+
+                let timeout_at =
+                    *init_t + TEMPO_DEADLINE - TEMPO_DEADLINE_REDUCTION * nicks.len() as u32;
+                let time_remaining = timeout_at.saturating_duration_since(Instant::now());
+                info!(
+                    "Tempo timeout in {time_remaining:.0?} (reduced by {reduction:.0?} due to {count} tempo(s))",
+                    reduction = TEMPO_DEADLINE_REDUCTION * nicks.len() as u32,
+                    count = nicks.len()
+                );
 
                 if nicks.len() >= NUM_TEMPO_NICKS {
+                    info!("Tempo threshold reached, transitioning to bingo mode");
                     songleader.enter_bingo_mode();
                 } else {
                     songleader.state.persist();
                 }
+            } else {
+                info!(
+                    "Ignoring tempo by {nick} - not in Tempo mode (current: {:?})",
+                    songleader.state.mode
+                );
             }
         }
 
         SongleaderAction::Bingo { nick } => {
-            if let Mode::Bingo { nicks, .. } = &mut songleader.state.mode {
-                nicks.insert(nick);
+            if let Mode::Bingo { nicks, song } = &mut songleader.state.mode {
+                let is_new = nicks.insert(nick.clone());
+                let remaining = NUM_BINGO_NICKS.saturating_sub(nicks.len());
+
+                if is_new {
+                    info!(
+                        "Got bingo by {nick}, have {count}/{required} (waiting for {remaining} more) for song: {song}",
+                        count = nicks.len(),
+                        required = NUM_BINGO_NICKS
+                    );
+                } else {
+                    info!("Duplicate bingo by {nick}, ignoring");
+                }
 
                 if nicks.len() >= NUM_BINGO_NICKS {
+                    info!("Bingo threshold reached, transitioning to singing mode");
                     songleader.enter_singing_mode().await;
                 } else {
                     songleader.state.persist();
                 }
+            } else {
+                info!(
+                    "Ignoring bingo by {nick} - not in Bingo mode (current: {:?})",
+                    songleader.state.mode
+                );
             }
         }
 
         SongleaderAction::Skål => {
             if let Mode::Singing = &mut songleader.state.mode {
+                info!("Received skål, song finished - transitioning to tempo mode");
                 songleader.enter_tempo_mode();
+            } else {
+                info!(
+                    "Ignoring skål - not in Singing mode (current: {:?})",
+                    songleader.state.mode
+                );
             }
         }
         SongleaderAction::ListSongs => {
             let songs = songleader.state.get_songs();
+            info!("Listing songs: {} total", songs.len());
             let msg = if songs.is_empty() {
                 "No requested songs found :(".to_string()
             } else {
@@ -692,12 +779,30 @@ pub async fn handle_incoming_event(
             };
             songleader.say_rich(&msg, RichContent::SongRequestList { songs });
         }
-        SongleaderAction::ForceTempo => songleader.enter_tempo_mode(),
-        SongleaderAction::ForceBingo => songleader.enter_bingo_mode(),
-        SongleaderAction::ForceSinging => songleader.enter_singing_mode().await,
-        SongleaderAction::Pause => songleader.enter_inactive_mode(),
-        SongleaderAction::End => songleader.end(),
-        SongleaderAction::Begin => songleader.begin().await,
+        SongleaderAction::ForceTempo => {
+            info!("Force tempo requested");
+            songleader.enter_tempo_mode();
+        }
+        SongleaderAction::ForceBingo => {
+            info!("Force bingo requested");
+            songleader.enter_bingo_mode();
+        }
+        SongleaderAction::ForceSinging => {
+            info!("Force singing requested");
+            songleader.enter_singing_mode().await;
+        }
+        SongleaderAction::Pause => {
+            info!("Pause requested");
+            songleader.enter_inactive_mode();
+        }
+        SongleaderAction::End => {
+            info!("End party requested");
+            songleader.end();
+        }
+        SongleaderAction::Begin => {
+            info!("Begin party requested");
+            songleader.begin().await;
+        }
         SongleaderAction::Help => {
             // Disallow help text outside of these modes
             if !matches!(songleader.state.mode, Mode::Tempo { .. } | Mode::Inactive) {

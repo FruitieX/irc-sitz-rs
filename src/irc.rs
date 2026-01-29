@@ -176,6 +176,11 @@ async fn connect_and_run(
                     let action = message_to_action(&message, &config).await;
 
                     if let Some(action) = action {
+                        if let Command::PRIVMSG(_channel, text) = &message.command {
+                            if let Some(nick) = message.source_nickname() {
+                                info!("IRC command from {nick}: {text}");
+                            }
+                        }
                         bus.send(action);
                     } else {
                         // If not a command, mirror to other platforms

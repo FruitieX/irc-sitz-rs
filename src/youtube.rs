@@ -20,9 +20,11 @@ pub async fn init() -> anyhow::Result<()> {
 }
 
 pub async fn get_yt_media_source_stream(url: String) -> Result<MediaSourceStream> {
+    info!("Starting yt-dlp stream for: {url}");
+
     // Spawn yt-dlp ourselves so we can capture stdout as a stream
     let mut cmd = tokio::process::Command::new("./yt-dlp")
-        .arg(url)
+        .arg(url.clone())
         .arg("--no-progress")
         // this speeds up the process slightly but maybe reduces compatibility
         // .arg("--extractor-args")
@@ -46,9 +48,12 @@ pub async fn get_yt_media_source_stream(url: String) -> Result<MediaSourceStream
     let stdout = cmd.stdout.take().context("Failed to get yt-dlp stdout")?;
     let stderr = cmd.stderr.take().context("Failed to get yt-dlp stderr")?;
 
+    let url_for_log = url.clone();
     tokio::spawn(async move {
         let output = cmd.wait_with_output().await.unwrap();
-        if !output.status.success() {
+        if output.status.success() {
+            info!("yt-dlp stream completed successfully for: {url_for_log}");
+        } else {
             error!(
                 "yt-dlp failed (exit code {code}): {stderr:?}",
                 code = output.status.code().unwrap_or_default(),
@@ -73,6 +78,8 @@ pub async fn get_yt_media_source_stream(url: String) -> Result<MediaSourceStream
 }
 
 pub async fn get_yt_song_info(url_or_search_terms: String, queued_by: String) -> Result<Song> {
+    info!("Fetching song info for: {url_or_search_terms}");
+
     let output = YoutubeDl::new(url_or_search_terms.clone())
         .youtube_dl_path("./yt-dlp")
         .extract_audio(true)
@@ -102,6 +109,10 @@ pub async fn get_yt_song_info(url_or_search_terms: String, queued_by: String) ->
         .as_u64()
         .context("Invalid duration in yt-dlp JSON")?;
 
+    info!(
+        "Found song: {title} by {channel} (id: {id}, duration: {duration}s)"
+    );
+
     Ok(Song {
         id,
         url,
@@ -117,6 +128,8 @@ pub async fn search_yt(query: &str, max_results: usize) -> Result<Vec<(String, S
     if query.trim().is_empty() {
         return Ok(vec![]);
     }
+
+    info!("Searching YouTube for: {query} (max {max_results} results)");
 
     let output = YoutubeDl::new(format!("ytsearch{max_results}:{query}"))
         .youtube_dl_path("./yt-dlp")

@@ -279,6 +279,10 @@ async fn event_handler(
             )
             .await
             {
+                info!(
+                    "Discord text command from {}: {}",
+                    new_message.author.name, new_message.content
+                );
                 state.bus.send(action);
             }
         }
@@ -291,6 +295,7 @@ async fn event_handler(
                     // Get the user who reacted
                     if let Some(user) = &add_reaction.member {
                         let nick = user.nick.clone().unwrap_or_else(|| user.user.name.clone());
+                        info!("Discord bingo reaction from {nick}");
                         state
                             .bus
                             .send(Event::Songleader(SongleaderAction::Bingo { nick }));
@@ -553,6 +558,8 @@ async fn play(
     let state = ctx.data().read().await;
     let nick = ctx.author().name.clone();
 
+    info!("Discord /play from {nick}: {url_or_search}");
+
     // Check if it's a songbook URL
     if state.config.songbook.songbook_re.is_match(&url_or_search) {
         state
@@ -647,6 +654,8 @@ async fn request(
     let state = ctx.data().read().await;
     let nick = ctx.author().name.clone();
 
+    info!("Discord /request from {nick}: {song_url}");
+
     state
         .bus
         .send(Event::Songleader(SongleaderAction::RequestSongUrl {
@@ -686,6 +695,7 @@ async fn autocomplete_song<'a>(
 async fn tempo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
     let nick = ctx.author().name.clone();
+    info!("Discord /tempo from {nick}");
     state
         .bus
         .send(Event::Songleader(SongleaderAction::Tempo { nick }));
@@ -698,6 +708,7 @@ async fn tempo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
 async fn bingo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
     let nick = ctx.author().name.clone();
+    info!("Discord /bingo from {nick}");
     state
         .bus
         .send(Event::Songleader(SongleaderAction::Bingo { nick }));
@@ -709,6 +720,7 @@ async fn bingo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
 #[poise::command(slash_command)]
 async fn skal(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
+    info!("Discord /skal from {}", ctx.author().name);
     state.bus.send(Event::Songleader(SongleaderAction::Skål));
     ctx.say("🍻 Skål!").await?;
     Ok(())
