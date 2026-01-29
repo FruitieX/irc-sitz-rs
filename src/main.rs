@@ -1,6 +1,5 @@
 use irc_sitz_rs::{config, event, mixer, playback, songleader, sources, youtube};
 
-#[cfg(feature = "discord")]
 use std::sync::Arc;
 #[cfg(feature = "discord")]
 use std::sync::Mutex as StdMutex;
@@ -28,14 +27,14 @@ async fn main() -> anyhow::Result<()> {
     let music_buffer = sources::symphonia::init(&bus).await?;
 
     youtube::init().await?;
-    playback::init(&bus).await;
+    let playback = playback::init(&bus).await;
 
     #[cfg(feature = "irc")]
     if let Some(ref irc_config) = config.irc {
         irc::init(&bus, &config, irc_config).await?;
     }
 
-    songleader::init(&bus, &config).await;
+    let songleader = songleader::init(&bus, &config).await;
     event::debug(&bus);
 
     #[cfg(feature = "discord")]
@@ -46,8 +45,12 @@ async fn main() -> anyhow::Result<()> {
             music_buffer.clone(),
         )));
 
-        discord::init(&bus, &config, discord_config, mixer).await?;
+        discord::init(&bus, &config, discord_config, mixer, playback.clone(), songleader.clone()).await?;
     }
+
+    // Suppress unused variable warnings when discord feature is disabled
+    #[cfg(not(feature = "discord"))]
+    let _ = (playback, songleader);
 
     tokio::signal::ctrl_c().await?;
 

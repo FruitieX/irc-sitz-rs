@@ -12,6 +12,7 @@ use crate::{
 use anyhow::Result;
 use futures::StreamExt;
 use irc::client::prelude::*;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -34,11 +35,16 @@ pub enum IrcAction {
 /// Manages IRC connection state for reconnection handling
 struct IrcConnectionState {
     sender: Option<irc::client::Sender>,
+    /// Set of channel operators (nicks with @ prefix)
+    operators: HashSet<String>,
 }
 
 impl IrcConnectionState {
     fn new() -> Self {
-        Self { sender: None }
+        Self {
+            sender: None,
+            operators: HashSet::new(),
+        }
     }
 }
 
@@ -84,9 +90,12 @@ fn start_connection_manager(
         let mut reconnect_delay = RECONNECT_INITIAL_DELAY;
 
         loop {
+            let use_tls = irc_config.irc_use_tls.unwrap_or(false);
+            let default_port = if use_tls { 6697 } else { 6667 };
+            let port = irc_config.irc_port.unwrap_or(default_port);
             info!(
-                "Attempting to connect to IRC server: {}",
-                irc_config.irc_server
+                "Attempting to connect to IRC server: {}:{} (TLS: {})",
+                irc_config.irc_server, port, use_tls
             );
 
             match connect_and_run(&bus, &config, &irc_config, &connection_state).await {
@@ -129,10 +138,16 @@ async fn connect_and_run(
     irc_config: &IrcConfig,
     connection_state: &Arc<RwLock<IrcConnectionState>>,
 ) -> Result<()> {
+    let use_tls = irc_config.irc_use_tls.unwrap_or(false);
+    let default_port = if use_tls { 6697 } else { 6667 };
+    let port = irc_config.irc_port.unwrap_or(default_port);
+
     let irc_client_config = Config {
         nickname: Some(irc_config.irc_nickname.clone()),
         server: Some(irc_config.irc_server.clone()),
+        port: Some(port),
         channels: vec![irc_config.irc_channel.clone()],
+        use_tls: Some(use_tls),
         ..Default::default()
     };
 
@@ -159,11 +174,32 @@ async fn connect_and_run(
     while let Some(message_result) = stream.next().await {
         match message_result {
             Ok(message) => {
+                // Handle NAMES reply to track channel operators
+                if let Command::Response(Response::RPL_NAMREPLY, args) = &message.command {
+                    // args[2] is the channel, args[3] is the space-separated list of nicks
+                    if args.len() >= 4 && args[2].eq_ignore_ascii_case(&irc_channel) {
+                        let mut state = connection_state.write().await;
+                        for nick in args[3].split_whitespace() {
+                            if let Some(stripped) = nick.strip_prefix('@') {
+                                state.operators.insert(stripped.to_lowercase());
+                            } else if let Some(stripped) = nick.strip_prefix('+') {
+                                // +nick is voiced, not op - ignore the prefix
+                                state.operators.remove(&stripped.to_lowercase());
+                            } else {
+                                state.operators.remove(&nick.to_lowercase());
+                            }
+                        }
+                        debug!("Updated operators: {:?}", state.operators);
+                    }
+                    continue;
+                }
+
                 let target = message.response_target().map(|s| s.to_string());
 
                 let irc_channel = irc_channel.clone();
                 let bus = bus.clone();
                 let config = config.clone();
+                let connection_state = connection_state.clone();
 
                 // Process message in a separate task to avoid blocking the stream
                 tokio::spawn(async move {
@@ -172,13 +208,58 @@ async fn connect_and_run(
                         return;
                     }
 
+                    // Check if user is operator
+                    let is_operator = if let Some(nick) = message.source_nickname() {
+                        let state = connection_state.read().await;
+                        state.operators.contains(&nick.to_lowercase())
+                    } else {
+                        false
+                    };
+
                     // Try to parse as a command
-                    let action = message_to_action(&message, &config).await;
+                    let action = message_to_action(&message, &config, is_operator).await;
 
                     if let Some(action) = action {
                         if let Command::PRIVMSG(_channel, text) = &message.command {
                             if let Some(nick) = message.source_nickname() {
-                                info!("IRC command from {nick}: {text}");
+                                info!(
+                                    "IRC command from {nick}{}: {text}",
+                                    if is_operator { " (op)" } else { "" }
+                                );
+
+                                // Mirror tempo/bingo/skål/speak commands to Discord as user messages
+                                let cmd = text.split_whitespace().next().unwrap_or("");
+                                if matches!(
+                                    cmd,
+                                    "!tempo"
+                                        | "tempo"
+                                        | "!bingo"
+                                        | "bingo"
+                                        | "!skål"
+                                        | "skål"
+                                        | "!speak"
+                                        | "!say"
+                                ) {
+                                    bus.send_message(MessageAction::Mirror {
+                                        username: nick.to_string(),
+                                        text: text.clone(),
+                                        source: Platform::Irc,
+                                    });
+                                }
+
+                                // Mirror successful !play commands to Discord
+                                if matches!(cmd, "!play" | "!p")
+                                    && matches!(
+                                        action,
+                                        Event::Playback(PlaybackAction::Enqueue { .. })
+                                    )
+                                {
+                                    bus.send_message(MessageAction::Mirror {
+                                        username: nick.to_string(),
+                                        text: text.clone(),
+                                        source: Platform::Irc,
+                                    });
+                                }
                             }
                         }
                         bus.send(action);
@@ -295,7 +376,11 @@ async fn send_multiline_message(
 
 /// Parses an IRC message and returns the corresponding Event if it's a command.
 /// This function is public for testing purposes.
-pub async fn message_to_action(message: &Message, config: &crate::config::Config) -> Option<Event> {
+pub async fn message_to_action(
+    message: &Message,
+    config: &crate::config::Config,
+    is_operator: bool,
+) -> Option<Event> {
     if let Command::PRIVMSG(_channel, text) = &message.command {
         let nick = message.source_nickname()?.to_string();
 
@@ -373,8 +458,14 @@ pub async fn message_to_action(message: &Message, config: &crate::config::Config
             "!ls" => Some(Event::Songleader(SongleaderAction::ListSongs)),
             "!help" => Some(Event::Songleader(SongleaderAction::Help)),
 
-            // "Admin" commands for songleader
+            // "Admin" commands for songleader (require channel operator)
             "!song" | "!sing" => {
+                if !is_operator {
+                    return Some(Event::Irc(IrcAction::SendMsg(
+                        "Error: This command requires channel operator status".to_string(),
+                    )));
+                }
+
                 let subcommand = cmd_split.next()?;
 
                 match subcommand {
@@ -423,8 +514,14 @@ pub async fn message_to_action(message: &Message, config: &crate::config::Config
                 }
             }
 
-            // "Admin" commands for music playback
+            // "Admin" commands for music playback (require channel operator)
             "!music" | "!playback" => {
+                if !is_operator {
+                    return Some(Event::Irc(IrcAction::SendMsg(
+                        "Error: This command requires channel operator status".to_string(),
+                    )));
+                }
+
                 let subcommand = cmd_split.next()?;
 
                 match subcommand {

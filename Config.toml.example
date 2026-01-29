@@ -5,7 +5,9 @@ songbook_re = "https://(songbook|xn--sngbok-iua|sangbok|sångbok).example.com/(.
 # IRC configuration (optional, requires --features irc)
 # irc_nickname = "irc-bot"
 # irc_server = "port80a.se.quakenet.org"
+# irc_port = 6667           # Default: 6667 (plain) or 6697 (TLS)
 # irc_channel = "#bot-test-channel"
+# irc_use_tls = false       # Default: false
 
 # Discord configuration (optional, requires --features discord)
 # discord_token = "your-bot-token-here"

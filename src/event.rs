@@ -1,6 +1,7 @@
 #[cfg(feature = "irc")]
 use crate::irc::IrcAction;
 use crate::message::{MessageAction, Platform};
+use crate::mixer::MixerAction;
 use crate::playback::PlaybackAction;
 use crate::songleader::SongleaderAction;
 use crate::sources::{espeak::TextToSpeechAction, symphonia::SymphoniaAction};
@@ -81,6 +82,7 @@ pub enum Event {
     TextToSpeech(TextToSpeechAction),
     Symphonia(SymphoniaAction),
     Playback(PlaybackAction),
+    Mixer(MixerAction),
     #[cfg(feature = "irc")]
     Irc(IrcAction),
     Songleader(SongleaderAction),

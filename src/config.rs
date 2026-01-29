@@ -12,10 +12,13 @@ pub struct IrcConfig {
     /// IRC server hostname
     pub irc_server: String,
 
+    /// IRC server port (default: 6667 for plain, 6697 for TLS)
+    pub irc_port: Option<u16>,
+
     /// IRC channel to join
     pub irc_channel: String,
 
-    /// Whether to use TLS for the IRC connection
+    /// Whether to use TLS for the IRC connection (default: false)
     pub irc_use_tls: Option<bool>,
 }
 

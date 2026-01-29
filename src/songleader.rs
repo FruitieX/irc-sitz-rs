@@ -540,11 +540,16 @@ Have fun, and don't drown in the shower!
     }
 }
 
-pub async fn init(bus: &EventBus, config: &Config) {
+/// Type alias for shared songleader state
+pub type SharedSongleader = Arc<RwLock<Songleader>>;
+
+pub async fn init(bus: &EventBus, config: &Config) -> SharedSongleader {
     let songleader = Arc::new(RwLock::new(Songleader::create(bus, config).await));
 
     handle_incoming_event_loop(bus.clone(), config.clone(), songleader.clone());
     check_tempo_timeout_loop(songleader.clone());
+
+    songleader
 }
 
 /// Polls for tempo timeouts every second

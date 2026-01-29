@@ -30,7 +30,6 @@ pub async fn get_yt_media_source_stream(url: String) -> Result<MediaSourceStream
         // .arg("--extractor-args")
         // .arg("youtube:player_client=tv")
         // until symphonia has opus support
-
         // 2026 yt-dlp fix:
         // https://github.com/yt-dlp/yt-dlp/issues/15712
         .arg("--extractor-args")
@@ -38,7 +37,6 @@ pub async fn get_yt_media_source_stream(url: String) -> Result<MediaSourceStream
         .arg("--format")
         .arg("ba[protocol=m3u8_native]/b[protocol=m3u8_native]")
         // .arg("bestaudio[ext=m4a]")
-
         .arg("-o")
         .arg("-")
         .stdout(std::process::Stdio::piped())
@@ -54,11 +52,16 @@ pub async fn get_yt_media_source_stream(url: String) -> Result<MediaSourceStream
         if output.status.success() {
             info!("yt-dlp stream completed successfully for: {url_for_log}");
         } else {
-            error!(
-                "yt-dlp failed (exit code {code}): {stderr:?}",
-                code = output.status.code().unwrap_or_default(),
-                stderr = output.stderr
-            );
+            let code = output.status.code().unwrap_or_default();
+            // Exit code 1 with empty stderr typically means the stream was cancelled (e.g. skip)
+            if code == 1 && output.stderr.is_empty() {
+                info!("yt-dlp stream cancelled for: {url_for_log}");
+            } else {
+                error!(
+                    "yt-dlp failed (exit code {code}): {stderr:?}",
+                    stderr = output.stderr
+                );
+            }
         }
     });
 
@@ -109,9 +112,7 @@ pub async fn get_yt_song_info(url_or_search_terms: String, queued_by: String) ->
         .as_u64()
         .context("Invalid duration in yt-dlp JSON")?;
 
-    info!(
-        "Found song: {title} by {channel} (id: {id}, duration: {duration}s)"
-    );
+    info!("Found song: {title} by {channel} (id: {id}, duration: {duration}s)");
 
     Ok(Song {
         id,

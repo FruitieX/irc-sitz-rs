@@ -61,24 +61,24 @@ pub enum PlaybackAction {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct PlaybackState {
-    played_songs: Vec<Song>,
-    queued_songs: Vec<Song>,
+pub struct PlaybackState {
+    pub played_songs: Vec<Song>,
+    pub queued_songs: Vec<Song>,
 
     #[serde(skip_deserializing)]
     /// Whether the client has had a song loaded or not
-    song_loaded: bool,
+    pub song_loaded: bool,
 
     #[serde(skip_deserializing)]
     /// Whether a song is currently being played by the client
-    is_playing: bool,
+    pub is_playing: bool,
 
     /// Whether we should start playing if queue empty and a new song is
     /// enqueued
-    should_play: bool,
+    pub should_play: bool,
 
     /// Progress of the current song in seconds
-    playback_progress: u64,
+    pub playback_progress: u64,
 }
 
 impl Default for PlaybackState {
@@ -142,7 +142,7 @@ impl PlaybackState {
 #[derive(Clone)]
 pub struct Playback {
     bus: EventBus,
-    state: PlaybackState,
+    pub state: PlaybackState,
 }
 
 impl Playback {
@@ -209,8 +209,8 @@ impl Playback {
             );
 
             let msg = format!(
-                "Added {} ({}) to the queue. Time until playback: {} min",
-                song.title, song.url, time_until_playback
+                "Added {} ({}) to the queue (queued by {}). Time until playback: {} min",
+                song.title, song.url, song.queued_by, time_until_playback
             );
             self.say_rich(
                 &msg,
@@ -407,10 +407,15 @@ impl Playback {
     }
 }
 
-pub async fn init(bus: &EventBus) {
+/// Type alias for shared playback state
+pub type SharedPlayback = Arc<RwLock<Playback>>;
+
+pub async fn init(bus: &EventBus) -> SharedPlayback {
     let playback = Arc::new(RwLock::new(Playback::create(bus.clone()).await));
 
-    handle_incoming_event_loop(bus.clone(), playback);
+    handle_incoming_event_loop(bus.clone(), playback.clone());
+
+    playback
 }
 
 fn handle_incoming_event_loop(bus: EventBus, playback: Arc<RwLock<Playback>>) {

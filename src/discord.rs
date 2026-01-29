@@ -13,9 +13,9 @@ use crate::{
     event::{Event, EventBus},
     message::{CountdownValue, MessageAction, NowPlayingInfo, Platform, RichContent},
     mixer::Mixer,
-    playback::{PlaybackAction, Song, MAX_SONG_DURATION},
+    playback::{PlaybackAction, SharedPlayback, Song, MAX_SONG_DURATION},
     songbook::SongbookSong,
-    songleader::SongleaderAction,
+    songleader::{Mode, SharedSongleader, SongleaderAction},
     sources::{
         espeak::{Priority, TextToSpeechAction},
         Sample,
@@ -24,10 +24,11 @@ use crate::{
 };
 use anyhow::Result;
 use poise::serenity_prelude::{
-    self as serenity, ChannelId, CreateEmbed, CreateMessage, GuildId, Http,
+    self as serenity, ChannelId, CreateEmbed, CreateMessage, EditMessage, GuildId, Http,
+    ReactionType,
 };
 use songbird::{input::Input, tracks::Track, SerenityInit};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use tokio::sync::RwLock;
 
 /// Discord bot state shared across handlers
@@ -37,10 +38,20 @@ struct BotState {
     channel_id: ChannelId,
     /// Message ID of the current bingo announcement (for reaction tracking)
     bingo_message_id: Option<serenity::MessageId>,
+    /// Message ID of the current now-playing message (for progress updates and skip reactions)
+    now_playing_message_id: Option<serenity::MessageId>,
+    /// Current song ID being played (to detect song changes)
+    current_song_id: Option<String>,
+    /// Users who have voted to skip the current song
+    skip_votes: HashSet<String>,
     /// HTTP client for sending messages (set when bot is ready)
     http: Option<Arc<Http>>,
     /// Pull-based mixer for voice channel streaming
     mixer: Arc<StdMutex<Mixer>>,
+    /// Shared playback state for reading queue/progress info
+    playback: SharedPlayback,
+    /// Shared songleader state for reading mode info
+    songleader: SharedSongleader,
 }
 
 type Context<'a> = poise::Context<'a, Arc<RwLock<BotState>>, anyhow::Error>;
@@ -133,12 +144,17 @@ fn create_voice_input(mixer: Arc<StdMutex<Mixer>>) -> Input {
     adapter.into()
 }
 
+/// Number of votes required to skip a song
+const SKIP_VOTES_REQUIRED: usize = 4;
+
 /// Initialize the Discord bot
 pub async fn init(
     bus: &EventBus,
     config: &Config,
     discord_config: &DiscordConfig,
     mixer: Arc<StdMutex<Mixer>>,
+    playback: SharedPlayback,
+    songleader: SharedSongleader,
 ) -> Result<()> {
     let channel_id = ChannelId::new(discord_config.discord_channel_id);
     let guild_id = GuildId::new(discord_config.discord_guild_id);
@@ -150,12 +166,20 @@ pub async fn init(
         config: config.clone(),
         channel_id,
         bingo_message_id: None,
+        now_playing_message_id: None,
+        current_song_id: None,
+        skip_votes: HashSet::new(),
         http: None,
         mixer: mixer.clone(),
+        playback,
+        songleader,
     }));
 
     // Start the outgoing message handler
     start_outgoing_message_handler(bus.clone(), state.clone());
+
+    // Start the progress bar update loop
+    start_progress_update_loop(state.clone());
 
     let state_for_setup = state.clone();
     let mixer_for_setup = mixer;
@@ -302,6 +326,46 @@ async fn event_handler(
                     }
                 }
             }
+
+            // Check if this is a skip reaction on the now-playing message
+            if let Some(np_msg_id) = state.now_playing_message_id {
+                if add_reaction.message_id == np_msg_id {
+                    // Check if it's the skip emoji
+                    if matches!(&add_reaction.emoji, ReactionType::Unicode(s) if s == "⏭️") {
+                        if let Some(user) = &add_reaction.member {
+                            // Ignore bot reactions
+                            if user.user.bot {
+                                return Ok(());
+                            }
+
+                            let nick = user.nick.clone().unwrap_or_else(|| user.user.name.clone());
+                            drop(state); // Release read lock before write
+
+                            let mut state_write = data.write().await;
+                            state_write.skip_votes.insert(nick.clone());
+                            let vote_count = state_write.skip_votes.len();
+
+                            info!("Skip vote from {nick}: {vote_count}/{SKIP_VOTES_REQUIRED}");
+
+                            if vote_count >= SKIP_VOTES_REQUIRED {
+                                // Check if playback should_play is true (don't skip if paused)
+                                let should_skip = {
+                                    let playback = state_write.playback.read().await;
+                                    playback.state.should_play && playback.state.is_playing
+                                };
+
+                                if should_skip {
+                                    info!("Skip vote threshold reached, skipping song");
+                                    state_write.bus.send(Event::Playback(PlaybackAction::Next));
+                                    state_write.skip_votes.clear();
+                                } else {
+                                    info!("Skip vote threshold reached but playback is paused, not skipping");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         _ => {}
     }
@@ -351,6 +415,87 @@ async fn text_message_to_action(text: &str, nick: &str, config: &Config) -> Opti
     }
 }
 
+/// Updates the now-playing message with current progress every 10 seconds
+fn start_progress_update_loop(state: Arc<RwLock<BotState>>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+
+        loop {
+            interval.tick().await;
+
+            let state_guard = state.read().await;
+
+            // Skip if bot not ready or no now_playing message
+            let (http, channel_id, msg_id) =
+                match (&state_guard.http, state_guard.now_playing_message_id) {
+                    (Some(http), Some(msg_id)) => (http.clone(), state_guard.channel_id, msg_id),
+                    _ => continue,
+                };
+
+            // Read playback state
+            let playback = state_guard.playback.read().await;
+            let is_playing = playback.state.is_playing;
+
+            // Only update if playing
+            if !is_playing {
+                continue;
+            }
+
+            let now_playing = playback
+                .state
+                .queued_songs
+                .first()
+                .map(|song| NowPlayingInfo {
+                    song: song.clone(),
+                    progress_secs: playback.state.playback_progress,
+                });
+
+            let next_up = playback.state.queued_songs.get(1).cloned();
+            let queue_length = playback.state.queued_songs.len();
+            let queue_duration_mins = {
+                let total_secs: u64 = playback.state.queued_songs.iter().map(|s| s.duration).sum();
+                total_secs.saturating_sub(playback.state.playback_progress) / 60
+            };
+            let upcoming_songs: Vec<Song> = playback
+                .state
+                .queued_songs
+                .iter()
+                .skip(1)
+                .take(9)
+                .cloned()
+                .collect();
+
+            drop(playback);
+            drop(state_guard);
+
+            // Build updated embed
+            let embed = create_queue_embed_extended(
+                now_playing.as_ref(),
+                next_up.as_ref(),
+                &upcoming_songs,
+                queue_length,
+                queue_duration_mins,
+                is_playing,
+            );
+
+            // Edit the message
+            if let Err(e) = channel_id
+                .edit_message(&http, msg_id, EditMessage::new().embed(embed))
+                .await
+            {
+                // Message might have been deleted, clear the ID
+                if let serenity::Error::Http(serenity::HttpError::UnsuccessfulRequest(resp)) = &e {
+                    if resp.status_code == serenity::StatusCode::NOT_FOUND {
+                        let mut state_write = state.write().await;
+                        state_write.now_playing_message_id = None;
+                    }
+                }
+                debug!("Failed to update now-playing message: {:?}", e);
+            }
+        }
+    });
+}
+
 /// Handles outgoing messages from the event bus to Discord
 fn start_outgoing_message_handler(bus: EventBus, state: Arc<RwLock<BotState>>) {
     tokio::spawn(async move {
@@ -380,16 +525,67 @@ fn start_outgoing_message_handler(bus: EventBus, state: Arc<RwLock<BotState>>) {
                                 queue_duration_mins,
                                 is_playing,
                             }) => {
-                                let embed = create_queue_embed(
+                                // Get upcoming songs from playback state
+                                let upcoming_songs = {
+                                    let state_guard = state.read().await;
+                                    let playback = state_guard.playback.read().await;
+                                    playback
+                                        .state
+                                        .queued_songs
+                                        .iter()
+                                        .skip(1)
+                                        .take(9)
+                                        .cloned()
+                                        .collect::<Vec<_>>()
+                                };
+
+                                let embed = create_queue_embed_extended(
                                     now_playing.as_ref(),
                                     next_up.as_ref(),
+                                    &upcoming_songs,
                                     queue_length,
                                     queue_duration_mins,
                                     is_playing,
                                 );
-                                channel_id
+                                let msg_result = channel_id
                                     .send_message(&http, CreateMessage::new().embed(embed))
-                                    .await
+                                    .await;
+
+                                // Track message ID, reset skip votes on song change, add skip reaction
+                                if let Ok(msg) = &msg_result {
+                                    let mut state_write = state.write().await;
+
+                                    // Check if song changed
+                                    let new_song_id =
+                                        now_playing.as_ref().map(|np| np.song.id.clone());
+                                    if state_write.current_song_id != new_song_id {
+                                        state_write.skip_votes.clear();
+                                        state_write.current_song_id = new_song_id;
+                                    }
+
+                                    state_write.now_playing_message_id = Some(msg.id);
+
+                                    // Add skip reaction if playing
+                                    if is_playing && now_playing.is_some() {
+                                        let http = http.clone();
+                                        let msg_id = msg.id;
+                                        let channel = channel_id;
+                                        tokio::spawn(async move {
+                                            if let Err(e) = channel
+                                                .create_reaction(
+                                                    &http,
+                                                    msg_id,
+                                                    ReactionType::Unicode("⏭️".to_string()),
+                                                )
+                                                .await
+                                            {
+                                                debug!("Failed to add skip reaction: {:?}", e);
+                                            }
+                                        });
+                                    }
+                                }
+
+                                msg_result
                             }
                             Some(RichContent::SongEnqueued {
                                 song,
@@ -574,7 +770,7 @@ async fn play(
 
     ctx.defer().await?;
 
-    let song = get_yt_song_info(url_or_search, nick).await;
+    let song = get_yt_song_info(url_or_search.clone(), nick.clone()).await;
 
     match song {
         Ok(song) if song.duration > MAX_SONG_DURATION.as_secs() => {
@@ -586,9 +782,16 @@ async fn play(
         }
         Ok(song) => {
             let title = song.title.clone();
+            let url = song.url.clone();
             state
                 .bus
                 .send(Event::Playback(PlaybackAction::Enqueue { song }));
+            // Mirror to IRC
+            state.bus.send_message(MessageAction::Mirror {
+                username: nick,
+                text: format!("!p {url}"),
+                source: Platform::Discord,
+            });
             ctx.say(format!("🎵 Added **{title}** to the queue"))
                 .await?;
         }
@@ -632,6 +835,7 @@ async fn speak(
     ctx: Context<'_>,
     #[description = "Text to speak"] text: String,
 ) -> Result<(), anyhow::Error> {
+    let username = ctx.author().name.clone();
     let state = ctx.data().read().await;
     state
         .bus
@@ -639,6 +843,12 @@ async fn speak(
             text: text.clone(),
             prio: Priority::Low,
         }));
+    // Mirror to IRC
+    state.bus.send_message(MessageAction::Mirror {
+        username,
+        text: format!("!speak {text}"),
+        source: Platform::Discord,
+    });
     ctx.say(format!("🗣️ Speaking: {text}")).await?;
     Ok(())
 }
@@ -695,10 +905,35 @@ async fn autocomplete_song<'a>(
 async fn tempo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
     let nick = ctx.author().name.clone();
+
+    // Check if we're in tempo mode
+    let songleader = state.songleader.read().await;
+    let mode = &songleader.state.mode;
+
+    if !matches!(mode, Mode::Tempo { .. }) {
+        let msg = match mode {
+            Mode::Inactive => "❌ The party hasn't started yet. Use `/song_admin begin` to start.",
+            Mode::Starting => "❌ The party is starting, please wait...",
+            Mode::Bingo { .. } => "❌ We're waiting for bingo! Use `/bingo` instead.",
+            Mode::Singing => "❌ A song is being sung! Use `/skal` when it's finished.",
+            Mode::Tempo { .. } => unreachable!(),
+        };
+        ctx.say(msg).await?;
+        return Ok(());
+    }
+
+    drop(songleader);
+
     info!("Discord /tempo from {nick}");
-    state
-        .bus
-        .send(Event::Songleader(SongleaderAction::Tempo { nick }));
+    state.bus.send(Event::Songleader(SongleaderAction::Tempo {
+        nick: nick.clone(),
+    }));
+    // Mirror to IRC
+    state.bus.send_message(MessageAction::Mirror {
+        username: nick,
+        text: "!tempo".to_string(),
+        source: Platform::Discord,
+    });
     ctx.say("⏭️ Tempo!").await?;
     Ok(())
 }
@@ -708,10 +943,35 @@ async fn tempo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
 async fn bingo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
     let nick = ctx.author().name.clone();
+
+    // Check if we're in bingo mode
+    let songleader = state.songleader.read().await;
+    let mode = &songleader.state.mode;
+
+    if !matches!(mode, Mode::Bingo { .. }) {
+        let msg = match mode {
+            Mode::Inactive => "❌ The party hasn't started yet. Use `/song_admin begin` to start.",
+            Mode::Starting => "❌ The party is starting, please wait...",
+            Mode::Tempo { .. } => "❌ We're in tempo mode. Use `/tempo` to vote for the next song.",
+            Mode::Singing => "❌ A song is being sung! Use `/skal` when it's finished.",
+            Mode::Bingo { .. } => unreachable!(),
+        };
+        ctx.say(msg).await?;
+        return Ok(());
+    }
+
+    drop(songleader);
+
     info!("Discord /bingo from {nick}");
-    state
-        .bus
-        .send(Event::Songleader(SongleaderAction::Bingo { nick }));
+    state.bus.send(Event::Songleader(SongleaderAction::Bingo {
+        nick: nick.clone(),
+    }));
+    // Mirror to IRC
+    state.bus.send_message(MessageAction::Mirror {
+        username: nick,
+        text: "!bingo".to_string(),
+        source: Platform::Discord,
+    });
     ctx.say("🎯 Bingo!").await?;
     Ok(())
 }
@@ -720,8 +980,37 @@ async fn bingo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
 #[poise::command(slash_command)]
 async fn skal(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
+
+    // Check if we're in singing mode
+    let songleader = state.songleader.read().await;
+    let mode = &songleader.state.mode;
+
+    if !matches!(mode, Mode::Singing) {
+        let msg = match mode {
+            Mode::Inactive => "❌ The party hasn't started yet. Use `/song_admin begin` to start.",
+            Mode::Starting => "❌ The party is starting, please wait...",
+            Mode::Tempo { .. } => {
+                "❌ No song is being sung. Use `/tempo` to vote for the next song."
+            }
+            Mode::Bingo { .. } => {
+                "❌ We're waiting for bingo! Use `/bingo` when you've found the song."
+            }
+            Mode::Singing => unreachable!(),
+        };
+        ctx.say(msg).await?;
+        return Ok(());
+    }
+
+    drop(songleader);
+
     info!("Discord /skal from {}", ctx.author().name);
     state.bus.send(Event::Songleader(SongleaderAction::Skål));
+    // Mirror to IRC
+    state.bus.send_message(MessageAction::Mirror {
+        username: ctx.author().name.clone(),
+        text: "!skål".to_string(),
+        source: Platform::Discord,
+    });
     ctx.say("🍻 Skål!").await?;
     Ok(())
 }
@@ -740,9 +1029,12 @@ async fn list_songs(ctx: Context<'_>) -> Result<(), anyhow::Error> {
 /// Show help
 #[poise::command(slash_command)]
 async fn help(ctx: Context<'_>) -> Result<(), anyhow::Error> {
-    let state = ctx.data().read().await;
-    state.bus.send(Event::Songleader(SongleaderAction::Help));
-    ctx.say("ℹ️ Fetching help...").await?;
+    let songbook_url = {
+        let state = ctx.data().read().await;
+        state.config.songbook.songbook_url.clone()
+    };
+    let embed = create_help_embed(&songbook_url);
+    ctx.send(poise::CreateReply::default().embed(embed)).await?;
     Ok(())
 }
 
@@ -974,7 +1266,7 @@ async fn voice_leave(ctx: Context<'_>) -> Result<(), anyhow::Error> {
 // Rich Embed Builders
 // ============================================================================
 
-/// Create a rich embed for queue status
+/// Create a rich embed for queue status (basic version for backwards compatibility)
 pub fn create_queue_embed(
     now_playing: Option<&NowPlayingInfo>,
     next_up: Option<&Song>,
@@ -982,15 +1274,28 @@ pub fn create_queue_embed(
     queue_duration_mins: u64,
     is_playing: bool,
 ) -> CreateEmbed {
-    let mut embed = CreateEmbed::new()
-        .title(if is_playing {
-            "▶️ Now Playing"
-        } else {
-            "⏸️ Paused"
-        })
-        .color(if is_playing { 0x00ff00 } else { 0xffaa00 });
+    create_queue_embed_extended(
+        now_playing,
+        next_up,
+        &[],
+        queue_length,
+        queue_duration_mins,
+        is_playing,
+    )
+}
 
-    if let Some(np_info) = now_playing {
+/// Create a rich embed for queue status with upcoming songs list
+pub fn create_queue_embed_extended(
+    now_playing: Option<&NowPlayingInfo>,
+    next_up: Option<&Song>,
+    upcoming_songs: &[Song],
+    queue_length: usize,
+    queue_duration_mins: u64,
+    is_playing: bool,
+) -> CreateEmbed {
+    let status_emoji = if is_playing { "▶️" } else { "⏸️" };
+
+    let mut embed = if let Some(np_info) = now_playing {
         let song = &np_info.song;
         let progress_secs = np_info.progress_secs;
         let duration = song.duration;
@@ -1001,7 +1306,7 @@ pub fn create_queue_embed(
         } else {
             0
         };
-        let filled = progress_pct / 5; // 20 segments
+        let filled = (progress_pct / 5).min(20); // 20 segments, clamped
         let empty = 20 - filled;
         let progress_bar = format!("{}{}", "▓".repeat(filled), "░".repeat(empty));
 
@@ -1013,22 +1318,50 @@ pub fn create_queue_embed(
             duration % 60
         );
 
-        embed = embed
-            .field("🎵 Song", &song.title, false)
+        // Use song title as the embed title (clickable via .url())
+        CreateEmbed::new()
+            .title(format!("{status_emoji} {}", song.title))
+            .url(&song.url)
+            .color(if is_playing { 0x00ff00 } else { 0xffaa00 })
             .field("👤 Queued by", &song.queued_by, true)
             .field("📺 Channel", &song.channel, true)
             .field("Progress", format!("{progress_bar}\n{progress_str}"), false)
-            .url(&song.url);
     } else {
-        embed = embed.description("No song currently playing");
+        CreateEmbed::new()
+            .title(format!("{status_emoji} No song playing"))
+            .description("Queue is empty!")
+            .color(0x808080)
+    };
+
+    // Add next up
+    if let Some(next) = next_up {
+        embed = embed.field(
+            "⏭️ Next up",
+            format!("[{}]({})", next.title, next.url),
+            false,
+        );
     }
 
-    if let Some(next) = next_up {
-        embed = embed.field("⏭️ Next up", &next.title, false);
+    // Add upcoming songs list (for Discord only, up to 9 more)
+    if !upcoming_songs.is_empty() {
+        let upcoming_list: Vec<String> = upcoming_songs
+            .iter()
+            .enumerate()
+            .map(|(i, song)| {
+                format!(
+                    "{}. [{}]({}) - {}",
+                    i + 2,
+                    song.title,
+                    song.url,
+                    song.queued_by
+                )
+            })
+            .collect();
+        embed = embed.field("📋 Coming up", upcoming_list.join("\n"), false);
     }
 
     embed = embed.footer(serenity::CreateEmbedFooter::new(format!(
-        "Queue: {} songs ({} min)",
+        "Queue: {} songs ({} min) • React ⏭️ to vote skip",
         queue_length, queue_duration_mins
     )));
 
@@ -1038,9 +1371,10 @@ pub fn create_queue_embed(
 /// Create a rich embed for song enqueued
 pub fn create_enqueue_embed(song: &Song, time_until_playback_mins: u64) -> CreateEmbed {
     CreateEmbed::new()
-        .title("✅ Added to Queue")
+        .title(format!("✅ {}", song.title))
+        .url(&song.url)
         .color(0x00ff00)
-        .field("🎵 Song", &song.title, false)
+        .description("Added to queue")
         .field("📺 Channel", &song.channel, true)
         .field("👤 Queued by", &song.queued_by, true)
         .field(
@@ -1048,7 +1382,6 @@ pub fn create_enqueue_embed(song: &Song, time_until_playback_mins: u64) -> Creat
             format!("{} min", time_until_playback_mins),
             true,
         )
-        .url(&song.url)
 }
 
 /// Create a rich embed for bingo announcement
