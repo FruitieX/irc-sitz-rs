@@ -114,7 +114,7 @@ mod tests {
             text: "test".to_string(),
             prio: Priority::Low,
         });
-        let _mixer = Event::Mixer(MixerAction::DuckSecondaryChannels);
+        let _mixer = Event::Mixer(MixerAction::SetSecondaryChannelVolume(0.5));
         let _symphonia = Event::Symphonia(SymphoniaAction::Stop);
         let _playback = Event::Playback(PlaybackAction::Play);
         let _irc = Event::Irc(IrcAction::SendMsg("test".to_string()));

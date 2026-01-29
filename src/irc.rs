@@ -227,7 +227,7 @@ async fn connect_and_run(
                                     if is_operator { " (op)" } else { "" }
                                 );
 
-                                // Mirror tempo/bingo/skål/speak commands to Discord as user messages
+                                // Mirror tempo/bingo/skål/speak/request commands to Discord as user messages
                                 let cmd = text.split_whitespace().next().unwrap_or("");
                                 if matches!(
                                     cmd,
@@ -239,6 +239,10 @@ async fn connect_and_run(
                                         | "skål"
                                         | "!speak"
                                         | "!say"
+                                        | "!request"
+                                        | "!req"
+                                        | "!r"
+                                        | "!rm"
                                 ) {
                                     bus.send_message(MessageAction::Mirror {
                                         username: nick.to_string(),

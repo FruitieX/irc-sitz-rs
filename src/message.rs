@@ -20,7 +20,6 @@ pub enum RichContent {
     /// Queue status with optional progress information
     QueueStatus {
         now_playing: Option<NowPlayingInfo>,
-        next_up: Option<Song>,
         queue_length: usize,
         queue_duration_mins: u64,
         is_playing: bool,

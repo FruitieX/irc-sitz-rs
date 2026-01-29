@@ -125,6 +125,7 @@ pub async fn get_yt_song_info(url_or_search_terms: String, queued_by: String) ->
 }
 
 /// Search YouTube and return multiple results for autocomplete
+/// Only returns videos that are 10 minutes or less in duration
 pub async fn search_yt(query: &str, max_results: usize) -> Result<Vec<(String, String)>> {
     if query.trim().is_empty() {
         return Ok(vec![]);
@@ -132,7 +133,10 @@ pub async fn search_yt(query: &str, max_results: usize) -> Result<Vec<(String, S
 
     info!("Searching YouTube for: {query} (max {max_results} results)");
 
-    let output = YoutubeDl::new(format!("ytsearch{max_results}:{query}"))
+    // Fetch more results than needed to account for duration filtering
+    let fetch_count = max_results * 3;
+
+    let output = YoutubeDl::new(format!("ytsearch{fetch_count}:{query}"))
         .youtube_dl_path("./yt-dlp")
         .extra_arg("--flat-playlist")
         .extra_arg("--no-playlist")
@@ -145,20 +149,36 @@ pub async fn search_yt(query: &str, max_results: usize) -> Result<Vec<(String, S
     };
 
     let entries = playlist.entries.unwrap_or_default();
+    const MAX_DURATION_SECS: f64 = 10.0 * 60.0;
 
     Ok(entries
         .into_iter()
         .filter_map(|v| {
+            // Filter out videos longer than 10 minutes
+            let duration = v.duration.as_ref()?.as_f64()?;
+            if duration > MAX_DURATION_SECS {
+                return None;
+            }
+
             let title = v.title?;
             let id = v.id;
             let url = format!("https://youtu.be/{id}");
-            // Truncate title if too long for Discord's 100 char limit
-            let display = if title.len() > 95 {
-                format!("{}...", &title[..92])
+
+            // Format duration for display
+            let mins = (duration / 60.0) as u64;
+            let secs = (duration % 60.0) as u64;
+            let duration_str = format!("{mins}:{secs:02}");
+
+            // Truncate title if too long for Discord's 100 char limit (accounting for duration)
+            let max_title_len = 90 - duration_str.len();
+            let display_title = if title.len() > max_title_len {
+                format!("{}...", &title[..max_title_len - 3])
             } else {
                 title
             };
-            Some((display, url))
+
+            Some((format!("{display_title} [{duration_str}]"), url))
         })
+        .take(max_results)
         .collect())
 }

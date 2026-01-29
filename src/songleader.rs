@@ -21,8 +21,8 @@ use tokio::{
 
 const SONGLEADER_STATE_FILE: &str = "songleader_state.json";
 const SONGLEADER_STATE_FILE_TMP: &str = "songleader_state.json.tmp";
-const NUM_TEMPO_NICKS: usize = 3;
-const NUM_BINGO_NICKS: usize = 3;
+pub const NUM_TEMPO_NICKS: usize = 3;
+pub const NUM_BINGO_NICKS: usize = 3;
 const ANTI_FLOOD_DELAY: Duration = Duration::from_millis(1200);
 const SECOND: Duration = Duration::from_secs(1);
 const TEMPO_DEADLINE_REDUCTION: Duration = Duration::from_secs(60);

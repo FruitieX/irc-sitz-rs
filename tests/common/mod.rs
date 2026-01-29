@@ -26,6 +26,7 @@ pub fn test_config() -> Config {
         irc: Some(IrcConfig {
             irc_nickname: "testbot".to_string(),
             irc_server: "localhost".to_string(),
+            irc_port: None,
             irc_channel: "#test".to_string(),
             irc_use_tls: None,
         }),

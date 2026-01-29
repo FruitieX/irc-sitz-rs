@@ -4,12 +4,28 @@ use crate::{
     sources::symphonia::SymphoniaAction,
 };
 use serde::{Deserialize, Serialize};
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 
 const PLAYBACK_STATE_FILE: &str = "playback_state.json";
 const PLAYBACK_STATE_FILE_TMP: &str = "playback_state.json.tmp";
 pub const MAX_SONG_DURATION: Duration = Duration::from_secs(10 * 60);
+
+/// Vote information for a song
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SongVotes {
+    /// Users who upvoted (moves song up in queue)
+    pub upvotes: Vec<String>,
+    /// Users who downvoted (moves song down in queue)
+    pub downvotes: Vec<String>,
+}
+
+impl SongVotes {
+    /// Net vote score (positive = up, negative = down)
+    pub fn score(&self) -> i32 {
+        self.upvotes.len() as i32 - self.downvotes.len() as i32
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Song {
@@ -58,12 +74,28 @@ pub enum PlaybackAction {
 
     /// Notification that playback has progressed
     PlaybackProgress { position: u64 },
+
+    /// Upvote a song (moves it up in queue priority)
+    Upvote { song_id: String, user: String },
+
+    /// Downvote a song (moves it down in queue priority)
+    Downvote { song_id: String, user: String },
+
+    /// Remove upvote from a song
+    RemoveUpvote { song_id: String, user: String },
+
+    /// Remove downvote from a song
+    RemoveDownvote { song_id: String, user: String },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PlaybackState {
     pub played_songs: Vec<Song>,
     pub queued_songs: Vec<Song>,
+
+    /// Votes for songs in the queue (keyed by song ID)
+    #[serde(default)]
+    pub song_votes: HashMap<String, SongVotes>,
 
     #[serde(skip_deserializing)]
     /// Whether the client has had a song loaded or not
@@ -86,6 +118,7 @@ impl Default for PlaybackState {
         PlaybackState {
             played_songs: vec![],
             queued_songs: vec![],
+            song_votes: HashMap::new(),
             song_loaded: false,
             is_playing: false,
             should_play: true,
@@ -177,7 +210,7 @@ impl Playback {
     }
 
     fn queue_len(&self) -> usize {
-        self.state.queued_songs.len()
+        self.state.queued_songs.len().saturating_sub(1)
     }
 
     fn queue_duration_mins(&self) -> u64 {
@@ -185,9 +218,124 @@ impl Playback {
             .state
             .queued_songs
             .iter()
+            .skip(1) // Skip current song
             .map(|song| song.duration)
             .sum();
-        total_secs.saturating_sub(self.state.playback_progress) / 60
+        total_secs / 60
+    }
+
+    /// Get votes for a song
+    pub fn get_votes(&self, song_id: &str) -> SongVotes {
+        self.state
+            .song_votes
+            .get(song_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Get upcoming songs sorted by effective position (considering votes)
+    /// Returns tuples of (song, original_position, effective_position)
+    /// Position 0 is the currently playing song (not affected by votes)
+    pub fn get_sorted_upcoming(&self) -> Vec<(Song, usize, usize)> {
+        if self.state.queued_songs.is_empty() {
+            return vec![];
+        }
+
+        // First song (now playing) is always first
+        let mut result = vec![];
+        if let Some(first) = self.state.queued_songs.first() {
+            result.push((first.clone(), 0, 0));
+        }
+
+        // For the rest, sort by vote score (higher score = earlier position)
+        let mut upcoming: Vec<(Song, usize)> = self
+            .state
+            .queued_songs
+            .iter()
+            .enumerate()
+            .skip(1)
+            .map(|(i, song)| (song.clone(), i))
+            .collect();
+
+        upcoming.sort_by(|(song_a, pos_a), (song_b, pos_b)| {
+            let score_a = self.get_votes(&song_a.id).score();
+            let score_b = self.get_votes(&song_b.id).score();
+            // Sort by score descending, then by original position ascending for ties
+            (score_b, pos_a).cmp(&(score_a, pos_b))
+        });
+
+        // Add effective positions
+        for (effective_pos, (song, original_pos)) in upcoming.into_iter().enumerate() {
+            result.push((song, original_pos, effective_pos + 1));
+        }
+
+        result
+    }
+
+    fn upvote(&mut self, song_id: &str, user: &str) {
+        // Prevent users from upvoting their own songs
+        let is_own_song = self
+            .state
+            .queued_songs
+            .iter()
+            .any(|s| s.id == song_id && s.queued_by == user);
+        if is_own_song {
+            info!("User {user} tried to upvote their own song {song_id}, ignoring");
+            return;
+        }
+
+        let votes = self
+            .state
+            .song_votes
+            .entry(song_id.to_string())
+            .or_default();
+        // Remove from downvotes if present
+        votes.downvotes.retain(|u| u != user);
+        // Add to upvotes if not already there
+        if !votes.upvotes.contains(&user.to_string()) {
+            votes.upvotes.push(user.to_string());
+            info!("User {user} upvoted song {song_id}");
+        }
+        self.state.persist();
+    }
+
+    fn downvote(&mut self, song_id: &str, user: &str) {
+        let votes = self
+            .state
+            .song_votes
+            .entry(song_id.to_string())
+            .or_default();
+        // Remove from upvotes if present
+        votes.upvotes.retain(|u| u != user);
+        // Add to downvotes if not already there
+        if !votes.downvotes.contains(&user.to_string()) {
+            votes.downvotes.push(user.to_string());
+            info!("User {user} downvoted song {song_id}");
+        }
+        self.state.persist();
+    }
+
+    fn remove_upvote(&mut self, song_id: &str, user: &str) {
+        if let Some(votes) = self.state.song_votes.get_mut(song_id) {
+            votes.upvotes.retain(|u| u != user);
+            info!("User {user} removed upvote from song {song_id}");
+            self.state.persist();
+        }
+    }
+
+    fn remove_downvote(&mut self, song_id: &str, user: &str) {
+        if let Some(votes) = self.state.song_votes.get_mut(song_id) {
+            votes.downvotes.retain(|u| u != user);
+            info!("User {user} removed downvote from song {song_id}");
+            self.state.persist();
+        }
+    }
+
+    /// Clean up votes for songs that are no longer in the queue
+    fn cleanup_votes(&mut self) {
+        let song_ids: std::collections::HashSet<_> =
+            self.state.queued_songs.iter().map(|s| &s.id).collect();
+        self.state.song_votes.retain(|id, _| song_ids.contains(id));
     }
 
     fn enqueue(&mut self, song: Song) {
@@ -272,13 +420,11 @@ impl Playback {
             song,
             progress_secs: self.state.playback_progress,
         });
-        let next_up = self.state.queued_songs.get(1).cloned();
 
         self.say_rich(
             &msg,
             RichContent::QueueStatus {
                 now_playing,
-                next_up,
                 queue_length: len,
                 queue_duration_mins: duration_min,
                 is_playing: self.state.is_playing,
@@ -374,19 +520,49 @@ impl Playback {
 
             if !remove_current {
                 info!("Finished song: {} ({})", song.title, song.id);
-                self.state.played_songs.push(song);
+                self.state.played_songs.push(song.clone());
             } else {
                 info!("Skipped song: {} ({})", song.title, song.id);
             }
+
+            // Clean up votes for the removed song
+            self.state.song_votes.remove(&song.id);
         }
+
+        self.cleanup_votes();
 
         if self.state.queued_songs.is_empty() {
             self.end_of_queue();
         } else {
-            // Play next song if it exists
-            let song = self.state.queued_songs.first().cloned();
-            if let Some(song) = song {
-                self.play_song(song);
+            // Sort remaining songs by votes, then take the first one
+            let mut songs_by_votes: Vec<_> = self
+                .state
+                .queued_songs
+                .iter()
+                .enumerate()
+                .map(|(i, song)| (song.clone(), i))
+                .collect();
+
+            songs_by_votes.sort_by(|(song_a, pos_a), (song_b, pos_b)| {
+                let score_a = self.get_votes(&song_a.id).score();
+                let score_b = self.get_votes(&song_b.id).score();
+                (score_b, pos_a).cmp(&(score_a, pos_b))
+            });
+
+            if let Some((_, orig_pos)) = songs_by_votes.first() {
+                // Move the selected song to the front of the queue if needed
+                if *orig_pos > 0 {
+                    let song = self.state.queued_songs.remove(*orig_pos);
+                    self.state.queued_songs.insert(0, song.clone());
+                    info!(
+                        "Promoted song {} from position {} to play next (due to votes)",
+                        song.title, orig_pos
+                    );
+                }
+                let song = self.state.queued_songs.first().cloned();
+                if let Some(song) = song {
+                    self.play_song(song);
+                }
             }
         }
         self.state.persist()
@@ -484,6 +660,18 @@ async fn handle_incoming_event(action: PlaybackAction, playback: Arc<RwLock<Play
         }
         PlaybackAction::PlaybackProgress { position } => {
             playback.state.playback_progress = position;
+        }
+        PlaybackAction::Upvote { song_id, user } => {
+            playback.upvote(&song_id, &user);
+        }
+        PlaybackAction::Downvote { song_id, user } => {
+            playback.downvote(&song_id, &user);
+        }
+        PlaybackAction::RemoveUpvote { song_id, user } => {
+            playback.remove_upvote(&song_id, &user);
+        }
+        PlaybackAction::RemoveDownvote { song_id, user } => {
+            playback.remove_downvote(&song_id, &user);
         }
     }
 }

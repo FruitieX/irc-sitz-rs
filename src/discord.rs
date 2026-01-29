@@ -13,9 +13,9 @@ use crate::{
     event::{Event, EventBus},
     message::{CountdownValue, MessageAction, NowPlayingInfo, Platform, RichContent},
     mixer::Mixer,
-    playback::{PlaybackAction, SharedPlayback, Song, MAX_SONG_DURATION},
+    playback::{PlaybackAction, SharedPlayback, Song, SongVotes, MAX_SONG_DURATION},
     songbook::SongbookSong,
-    songleader::{Mode, SharedSongleader, SongleaderAction},
+    songleader::{Mode, SharedSongleader, SongleaderAction, NUM_BINGO_NICKS, NUM_TEMPO_NICKS},
     sources::{
         espeak::{Priority, TextToSpeechAction},
         Sample,
@@ -28,7 +28,10 @@ use poise::serenity_prelude::{
     ReactionType,
 };
 use songbird::{input::Input, tracks::Track, SerenityInit};
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::sync::RwLock;
 
 /// Discord bot state shared across handlers
@@ -38,12 +41,16 @@ struct BotState {
     channel_id: ChannelId,
     /// Message ID of the current bingo announcement (for reaction tracking)
     bingo_message_id: Option<serenity::MessageId>,
-    /// Message ID of the current now-playing message (for progress updates and skip reactions)
+    /// Message ID of the current now-playing message (for progress updates)
     now_playing_message_id: Option<serenity::MessageId>,
     /// Current song ID being played (to detect song changes)
     current_song_id: Option<String>,
     /// Users who have voted to skip the current song
     skip_votes: HashSet<String>,
+    /// Mapping from song ID to enqueue message ID (for vote reactions)
+    enqueue_message_ids: HashMap<String, serenity::MessageId>,
+    /// Mapping from queue message ID to song ID (for skip reactions on any queue message)
+    queue_message_song_ids: HashMap<serenity::MessageId, String>,
     /// HTTP client for sending messages (set when bot is ready)
     http: Option<Arc<Http>>,
     /// Pull-based mixer for voice channel streaming
@@ -145,7 +152,7 @@ fn create_voice_input(mixer: Arc<StdMutex<Mixer>>) -> Input {
 }
 
 /// Number of votes required to skip a song
-const SKIP_VOTES_REQUIRED: usize = 4;
+const SKIP_VOTES_REQUIRED: usize = 3;
 
 /// Initialize the Discord bot
 pub async fn init(
@@ -169,6 +176,8 @@ pub async fn init(
         now_playing_message_id: None,
         current_song_id: None,
         skip_votes: HashSet::new(),
+        enqueue_message_ids: HashMap::new(),
+        queue_message_song_ids: HashMap::new(),
         http: None,
         mixer: mixer.clone(),
         playback,
@@ -201,6 +210,7 @@ pub async fn init(
                 song_admin(),
                 music_admin(),
                 voice_admin(),
+                bot_state(),
             ],
             event_handler: |ctx, event, _framework, data| Box::pin(event_handler(ctx, event, data)),
             ..Default::default()
@@ -327,40 +337,129 @@ async fn event_handler(
                 }
             }
 
-            // Check if this is a skip reaction on the now-playing message
-            if let Some(np_msg_id) = state.now_playing_message_id {
-                if add_reaction.message_id == np_msg_id {
-                    // Check if it's the skip emoji
-                    if matches!(&add_reaction.emoji, ReactionType::Unicode(s) if s == "⏭️") {
-                        if let Some(user) = &add_reaction.member {
+            // Check if this is a skip reaction on a queue message showing the current song
+            let is_skip_reaction = matches!(&add_reaction.emoji, ReactionType::Unicode(s) if s == "⏭️")
+                && state
+                    .queue_message_song_ids
+                    .get(&add_reaction.message_id)
+                    .map(|song_id| state.current_song_id.as_ref() == Some(song_id))
+                    .unwrap_or(false);
+
+            // Check if this is a vote reaction on an enqueue message
+            let vote_song_id = state
+                .enqueue_message_ids
+                .iter()
+                .find(|(_, &msg_id)| msg_id == add_reaction.message_id)
+                .map(|(song_id, _)| song_id.clone());
+
+            let bus = state.bus.clone();
+            drop(state);
+
+            if is_skip_reaction {
+                if let Some(user) = &add_reaction.member {
+                    // Ignore bot reactions
+                    if user.user.bot {
+                        return Ok(());
+                    }
+
+                    let nick = user.nick.clone().unwrap_or_else(|| user.user.name.clone());
+                    let mut state_write = data.write().await;
+                    state_write.skip_votes.insert(nick.clone());
+                    let vote_count = state_write.skip_votes.len();
+
+                    info!("Skip vote from {nick}: {vote_count}/{SKIP_VOTES_REQUIRED}");
+
+                    if vote_count >= SKIP_VOTES_REQUIRED {
+                        // Check if playback should_play is true (don't skip if paused)
+                        let should_skip = {
+                            let playback = state_write.playback.read().await;
+                            playback.state.should_play && playback.state.is_playing
+                        };
+
+                        if should_skip {
+                            info!("Skip vote threshold reached, skipping song");
+                            state_write.bus.send(Event::Playback(PlaybackAction::Next));
+                            state_write.skip_votes.clear();
+                        } else {
+                            info!(
+                                "Skip vote threshold reached but playback is paused, not skipping"
+                            );
+                        }
+                    }
+                }
+            }
+
+            if let Some(song_id) = vote_song_id {
+                if let Some(user) = &add_reaction.member {
+                    // Ignore bot reactions
+                    if user.user.bot {
+                        return Ok(());
+                    }
+
+                    let nick = user.nick.clone().unwrap_or_else(|| user.user.name.clone());
+
+                    match &add_reaction.emoji {
+                        ReactionType::Unicode(s) if s == "👍" => {
+                            info!("Upvote from {nick} for song {song_id}");
+                            bus.send(Event::Playback(PlaybackAction::Upvote {
+                                song_id,
+                                user: nick,
+                            }));
+                        }
+                        ReactionType::Unicode(s) if s == "👎" => {
+                            info!("Downvote from {nick} for song {song_id}");
+                            bus.send(Event::Playback(PlaybackAction::Downvote {
+                                song_id,
+                                user: nick,
+                            }));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        serenity::FullEvent::ReactionRemove { removed_reaction } => {
+            let state = data.read().await;
+
+            // Check if this is removing a vote reaction on an enqueue message
+            let song_id = state
+                .enqueue_message_ids
+                .iter()
+                .find(|(_, &msg_id)| msg_id == removed_reaction.message_id)
+                .map(|(song_id, _)| song_id.clone());
+
+            if let Some(song_id) = song_id {
+                if let Some(user_id) = removed_reaction.user_id {
+                    let bus = state.bus.clone();
+                    let http = state.http.clone();
+                    drop(state);
+
+                    // We need to get the username from the user ID
+                    if let Some(http) = http {
+                        if let Ok(user) = http.get_user(user_id).await {
                             // Ignore bot reactions
-                            if user.user.bot {
+                            if user.bot {
                                 return Ok(());
                             }
 
-                            let nick = user.nick.clone().unwrap_or_else(|| user.user.name.clone());
-                            drop(state); // Release read lock before write
+                            let nick = user.name.clone();
 
-                            let mut state_write = data.write().await;
-                            state_write.skip_votes.insert(nick.clone());
-                            let vote_count = state_write.skip_votes.len();
-
-                            info!("Skip vote from {nick}: {vote_count}/{SKIP_VOTES_REQUIRED}");
-
-                            if vote_count >= SKIP_VOTES_REQUIRED {
-                                // Check if playback should_play is true (don't skip if paused)
-                                let should_skip = {
-                                    let playback = state_write.playback.read().await;
-                                    playback.state.should_play && playback.state.is_playing
-                                };
-
-                                if should_skip {
-                                    info!("Skip vote threshold reached, skipping song");
-                                    state_write.bus.send(Event::Playback(PlaybackAction::Next));
-                                    state_write.skip_votes.clear();
-                                } else {
-                                    info!("Skip vote threshold reached but playback is paused, not skipping");
+                            match &removed_reaction.emoji {
+                                ReactionType::Unicode(s) if s == "👍" => {
+                                    info!("Removed upvote from {nick} for song {song_id}");
+                                    bus.send(Event::Playback(PlaybackAction::RemoveUpvote {
+                                        song_id,
+                                        user: nick,
+                                    }));
                                 }
+                                ReactionType::Unicode(s) if s == "👎" => {
+                                    info!("Removed downvote from {nick} for song {song_id}");
+                                    bus.send(Event::Playback(PlaybackAction::RemoveDownvote {
+                                        song_id,
+                                        user: nick,
+                                    }));
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -450,11 +549,16 @@ fn start_progress_update_loop(state: Arc<RwLock<BotState>>) {
                     progress_secs: playback.state.playback_progress,
                 });
 
-            let next_up = playback.state.queued_songs.get(1).cloned();
-            let queue_length = playback.state.queued_songs.len();
+            let queue_length = playback.state.queued_songs.len().saturating_sub(1);
             let queue_duration_mins = {
-                let total_secs: u64 = playback.state.queued_songs.iter().map(|s| s.duration).sum();
-                total_secs.saturating_sub(playback.state.playback_progress) / 60
+                let total_secs: u64 = playback
+                    .state
+                    .queued_songs
+                    .iter()
+                    .skip(1)
+                    .map(|s| s.duration)
+                    .sum();
+                total_secs / 60
             };
             let upcoming_songs: Vec<Song> = playback
                 .state
@@ -465,14 +569,20 @@ fn start_progress_update_loop(state: Arc<RwLock<BotState>>) {
                 .cloned()
                 .collect();
 
+            // Get vote info for upcoming songs
+            let song_votes: HashMap<String, SongVotes> = upcoming_songs
+                .iter()
+                .map(|s| (s.id.clone(), playback.get_votes(&s.id)))
+                .collect();
+
             drop(playback);
             drop(state_guard);
 
-            // Build updated embed
-            let embed = create_queue_embed_extended(
+            // Build updated embed with vote info
+            let embed = create_queue_embed_with_votes(
                 now_playing.as_ref(),
-                next_up.as_ref(),
                 &upcoming_songs,
+                &song_votes,
                 queue_length,
                 queue_duration_mins,
                 is_playing,
@@ -520,29 +630,33 @@ fn start_outgoing_message_handler(bus: EventBus, state: Arc<RwLock<BotState>>) {
                         let result = match rich {
                             Some(RichContent::QueueStatus {
                                 now_playing,
-                                next_up,
                                 queue_length,
                                 queue_duration_mins,
                                 is_playing,
                             }) => {
-                                // Get upcoming songs from playback state
-                                let upcoming_songs = {
+                                // Get upcoming songs from playback state with vote info
+                                let (upcoming_songs, song_votes) = {
                                     let state_guard = state.read().await;
                                     let playback = state_guard.playback.read().await;
-                                    playback
+                                    let songs: Vec<_> = playback
                                         .state
                                         .queued_songs
                                         .iter()
                                         .skip(1)
                                         .take(9)
                                         .cloned()
-                                        .collect::<Vec<_>>()
+                                        .collect();
+                                    let votes: HashMap<String, SongVotes> = songs
+                                        .iter()
+                                        .map(|s| (s.id.clone(), playback.get_votes(&s.id)))
+                                        .collect();
+                                    (songs, votes)
                                 };
 
-                                let embed = create_queue_embed_extended(
+                                let embed = create_queue_embed_with_votes(
                                     now_playing.as_ref(),
-                                    next_up.as_ref(),
                                     &upcoming_songs,
+                                    &song_votes,
                                     queue_length,
                                     queue_duration_mins,
                                     is_playing,
@@ -558,14 +672,38 @@ fn start_outgoing_message_handler(bus: EventBus, state: Arc<RwLock<BotState>>) {
                                     // Check if song changed
                                     let new_song_id =
                                         now_playing.as_ref().map(|np| np.song.id.clone());
-                                    if state_write.current_song_id != new_song_id {
+                                    let song_changed = state_write.current_song_id != new_song_id;
+
+                                    if song_changed {
                                         state_write.skip_votes.clear();
-                                        state_write.current_song_id = new_song_id;
+
+                                        // Clean up old queue message mappings for the old song
+                                        if let Some(old_song_id) = &state_write.current_song_id {
+                                            let old_id = old_song_id.clone();
+                                            state_write
+                                                .queue_message_song_ids
+                                                .retain(|_, v| v != &old_id);
+                                        }
+
+                                        state_write.current_song_id = new_song_id.clone();
+
+                                        // Clean up enqueue message tracking for the now-playing song
+                                        // (it's no longer in the queue, so reactions don't matter)
+                                        if let Some(song_id) = &new_song_id {
+                                            state_write.enqueue_message_ids.remove(song_id);
+                                        }
                                     }
 
                                     state_write.now_playing_message_id = Some(msg.id);
 
-                                    // Add skip reaction if playing
+                                    // Track this message for skip reactions
+                                    if let Some(song_id) = &new_song_id {
+                                        state_write
+                                            .queue_message_song_ids
+                                            .insert(msg.id, song_id.clone());
+                                    }
+
+                                    // Add skip reaction when a song is playing
                                     if is_playing && now_playing.is_some() {
                                         let http = http.clone();
                                         let msg_id = msg.id;
@@ -592,9 +730,48 @@ fn start_outgoing_message_handler(bus: EventBus, state: Arc<RwLock<BotState>>) {
                                 time_until_playback_mins,
                             }) => {
                                 let embed = create_enqueue_embed(&song, time_until_playback_mins);
-                                channel_id
+                                let msg_result = channel_id
                                     .send_message(&http, CreateMessage::new().embed(embed))
-                                    .await
+                                    .await;
+
+                                // Track message ID for vote reactions and add thumbs reactions
+                                if let Ok(msg) = &msg_result {
+                                    let mut state_write = state.write().await;
+                                    state_write
+                                        .enqueue_message_ids
+                                        .insert(song.id.clone(), msg.id);
+
+                                    // Add vote reactions
+                                    let http = http.clone();
+                                    let msg_id = msg.id;
+                                    let channel = channel_id;
+                                    tokio::spawn(async move {
+                                        // Add thumbs up
+                                        if let Err(e) = channel
+                                            .create_reaction(
+                                                &http,
+                                                msg_id,
+                                                ReactionType::Unicode("👍".to_string()),
+                                            )
+                                            .await
+                                        {
+                                            debug!("Failed to add thumbs up reaction: {:?}", e);
+                                        }
+                                        // Add thumbs down
+                                        if let Err(e) = channel
+                                            .create_reaction(
+                                                &http,
+                                                msg_id,
+                                                ReactionType::Unicode("👎".to_string()),
+                                            )
+                                            .await
+                                        {
+                                            debug!("Failed to add thumbs down reaction: {:?}", e);
+                                        }
+                                    });
+                                }
+
+                                msg_result
                             }
                             Some(RichContent::BingoAnnouncement { song }) => {
                                 let embed = create_bingo_embed(&song);
@@ -805,14 +982,11 @@ async fn play(
 
 /// Show the current queue
 #[poise::command(slash_command)]
-async fn queue(
-    ctx: Context<'_>,
-    #[description = "Position in queue to show"] position: Option<usize>,
-) -> Result<(), anyhow::Error> {
+async fn queue(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
-    state.bus.send(Event::Playback(PlaybackAction::ListQueue {
-        offset: position,
-    }));
+    state
+        .bus
+        .send(Event::Playback(PlaybackAction::ListQueue { offset: None }));
     ctx.say("📋 Fetching queue...").await?;
     Ok(())
 }
@@ -824,7 +998,15 @@ async fn remove(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let nick = ctx.author().name.clone();
     state
         .bus
-        .send(Event::Playback(PlaybackAction::RmSongByNick { nick }));
+        .send(Event::Playback(PlaybackAction::RmSongByNick {
+            nick: nick.clone(),
+        }));
+    // Mirror to IRC
+    state.bus.send_message(MessageAction::Mirror {
+        username: nick,
+        text: "!rm".to_string(),
+        source: Platform::Discord,
+    });
     ctx.say("🗑️ Removing your song...").await?;
     Ok(())
 }
@@ -857,9 +1039,7 @@ async fn speak(
 #[poise::command(slash_command)]
 async fn request(
     ctx: Context<'_>,
-    #[description = "Song URL from songbook"]
-    #[autocomplete = "autocomplete_song"]
-    song_url: String,
+    #[description = "Song URL from songbook"] song_url: String,
 ) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
     let nick = ctx.author().name.clone();
@@ -869,35 +1049,31 @@ async fn request(
     state
         .bus
         .send(Event::Songleader(SongleaderAction::RequestSongUrl {
-            url: song_url,
-            queued_by: nick,
+            url: song_url.clone(),
+            queued_by: nick.clone(),
         }));
+    // Mirror to IRC
+    state.bus.send_message(MessageAction::Mirror {
+        username: nick,
+        text: format!("!request {song_url}"),
+        source: Platform::Discord,
+    });
     ctx.say("🎤 Adding song request...").await?;
     Ok(())
 }
 
-/// Autocomplete for song requests
-async fn autocomplete_song<'a>(
+/// Autocomplete for songbook - just shows the songbook URL
+async fn autocomplete_songbook<'a>(
     ctx: Context<'_>,
-    partial: &'a str,
+    _partial: &'a str,
 ) -> Vec<poise::serenity_prelude::AutocompleteChoice> {
-    // For now, return empty - we'd need to implement a song search API
-    // This is a placeholder for future songbook search functionality
     let state = ctx.data().read().await;
     let songbook_url = &state.config.songbook.songbook_url;
 
-    // Return some example suggestions based on partial input
-    if partial.is_empty() {
-        vec![poise::serenity_prelude::AutocompleteChoice::new(
-            "Paste a songbook URL or type to search",
-            format!("{songbook_url}/"),
-        )]
-    } else {
-        vec![poise::serenity_prelude::AutocompleteChoice::new(
-            format!("Search for: {partial}"),
-            format!("{songbook_url}/search?q={partial}"),
-        )]
-    }
+    vec![poise::serenity_prelude::AutocompleteChoice::new(
+        format!("Open songbook: {songbook_url}"),
+        songbook_url.clone(),
+    )]
 }
 
 /// Vote to advance to the next song
@@ -906,21 +1082,26 @@ async fn tempo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
     let nick = ctx.author().name.clone();
 
-    // Check if we're in tempo mode
+    // Check if we're in tempo mode and get current vote count
     let songleader = state.songleader.read().await;
     let mode = &songleader.state.mode;
 
-    if !matches!(mode, Mode::Tempo { .. }) {
-        let msg = match mode {
-            Mode::Inactive => "❌ The party hasn't started yet. Use `/song_admin begin` to start.",
-            Mode::Starting => "❌ The party is starting, please wait...",
-            Mode::Bingo { .. } => "❌ We're waiting for bingo! Use `/bingo` instead.",
-            Mode::Singing => "❌ A song is being sung! Use `/skal` when it's finished.",
-            Mode::Tempo { .. } => unreachable!(),
-        };
-        ctx.say(msg).await?;
-        return Ok(());
-    }
+    let (current_votes, already_voted) = match mode {
+        Mode::Tempo { nicks, .. } => (nicks.len(), nicks.contains(&nick)),
+        _ => {
+            let msg = match mode {
+                Mode::Inactive => {
+                    "❌ The party hasn't started yet. Use `/song_admin begin` to start."
+                }
+                Mode::Starting => "❌ The party is starting, please wait...",
+                Mode::Bingo { .. } => "❌ We're waiting for bingo! Use `/bingo` instead.",
+                Mode::Singing => "❌ A song is being sung! Use `/skal` when it's finished.",
+                Mode::Tempo { .. } => unreachable!(),
+            };
+            ctx.say(msg).await?;
+            return Ok(());
+        }
+    };
 
     drop(songleader);
 
@@ -934,7 +1115,19 @@ async fn tempo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
         text: "!tempo".to_string(),
         source: Platform::Discord,
     });
-    ctx.say("⏭️ Tempo!").await?;
+
+    let response = if already_voted {
+        format!("⏭️ You already voted! ({current_votes}/{NUM_TEMPO_NICKS})")
+    } else {
+        let new_count = current_votes + 1;
+        if new_count >= NUM_TEMPO_NICKS {
+            "⏭️ Tempo! 🎉 That's enough votes, moving to bingo!".to_string()
+        } else {
+            let remaining = NUM_TEMPO_NICKS - new_count;
+            format!("⏭️ Tempo! ({new_count}/{NUM_TEMPO_NICKS}, need {remaining} more)")
+        }
+    };
+    ctx.say(response).await?;
     Ok(())
 }
 
@@ -944,21 +1137,31 @@ async fn bingo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
     let nick = ctx.author().name.clone();
 
-    // Check if we're in bingo mode
+    // Check if we're in bingo mode and get current vote count
     let songleader = state.songleader.read().await;
     let mode = &songleader.state.mode;
 
-    if !matches!(mode, Mode::Bingo { .. }) {
-        let msg = match mode {
-            Mode::Inactive => "❌ The party hasn't started yet. Use `/song_admin begin` to start.",
-            Mode::Starting => "❌ The party is starting, please wait...",
-            Mode::Tempo { .. } => "❌ We're in tempo mode. Use `/tempo` to vote for the next song.",
-            Mode::Singing => "❌ A song is being sung! Use `/skal` when it's finished.",
-            Mode::Bingo { .. } => unreachable!(),
-        };
-        ctx.say(msg).await?;
-        return Ok(());
-    }
+    let (current_votes, already_voted, song_title) = match mode {
+        Mode::Bingo { nicks, song } => {
+            let title = song.title.clone().unwrap_or_else(|| song.id.clone());
+            (nicks.len(), nicks.contains(&nick), title)
+        }
+        _ => {
+            let msg = match mode {
+                Mode::Inactive => {
+                    "❌ The party hasn't started yet. Use `/song_admin begin` to start."
+                }
+                Mode::Starting => "❌ The party is starting, please wait...",
+                Mode::Tempo { .. } => {
+                    "❌ We're in tempo mode. Use `/tempo` to speedup waiting for the next song."
+                }
+                Mode::Singing => "❌ A song is being sung! Use `/skal` when it's finished.",
+                Mode::Bingo { .. } => unreachable!(),
+            };
+            ctx.say(msg).await?;
+            return Ok(());
+        }
+    };
 
     drop(songleader);
 
@@ -972,7 +1175,21 @@ async fn bingo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
         text: "!bingo".to_string(),
         source: Platform::Discord,
     });
-    ctx.say("🎯 Bingo!").await?;
+
+    let response = if already_voted {
+        format!("🎯 You already found **{song_title}**! ({current_votes}/{NUM_BINGO_NICKS})")
+    } else {
+        let new_count = current_votes + 1;
+        if new_count >= NUM_BINGO_NICKS {
+            format!("🎯 Bingo! 🎉 Everyone's ready to sing **{song_title}**!")
+        } else {
+            let remaining = NUM_BINGO_NICKS - new_count;
+            format!(
+                "🎯 Found **{song_title}**! ({new_count}/{NUM_BINGO_NICKS}, need {remaining} more)"
+            )
+        }
+    };
+    ctx.say(response).await?;
     Ok(())
 }
 
@@ -990,7 +1207,7 @@ async fn skal(ctx: Context<'_>) -> Result<(), anyhow::Error> {
             Mode::Inactive => "❌ The party hasn't started yet. Use `/song_admin begin` to start.",
             Mode::Starting => "❌ The party is starting, please wait...",
             Mode::Tempo { .. } => {
-                "❌ No song is being sung. Use `/tempo` to vote for the next song."
+                "❌ No song is being sung. Use `/tempo` to speedup waiting for the next song."
             }
             Mode::Bingo { .. } => {
                 "❌ We're waiting for bingo! Use `/bingo` when you've found the song."
@@ -1048,7 +1265,9 @@ async fn help(ctx: Context<'_>) -> Result<(), anyhow::Error> {
         "song_pause",
         "song_force_tempo",
         "song_force_bingo",
-        "song_force_singing"
+        "song_force_singing",
+        "song_remove_music",
+        "song_remove_song"
     )
 )]
 async fn song_admin(_ctx: Context<'_>) -> Result<(), anyhow::Error> {
@@ -1106,6 +1325,97 @@ async fn song_force_singing(ctx: Context<'_>) -> Result<(), anyhow::Error> {
         .bus
         .send(Event::Songleader(SongleaderAction::ForceSinging));
     ctx.say("🎤 Forcing singing mode").await?;
+    Ok(())
+}
+
+/// Autocomplete for remove-music - shows users with songs in the music queue
+async fn autocomplete_music_users<'a>(
+    ctx: Context<'_>,
+    partial: &'a str,
+) -> Vec<poise::serenity_prelude::AutocompleteChoice> {
+    let state = ctx.data().read().await;
+    let playback = state.playback.read().await;
+
+    // Find the last song for each user (skip currently playing song at index 0)
+    let mut user_songs: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for song in playback.state.queued_songs.iter().skip(1) {
+        user_songs.insert(song.queued_by.clone(), song.title.clone());
+    }
+
+    user_songs
+        .into_iter()
+        .filter(|(user, _)| user.to_lowercase().contains(&partial.to_lowercase()))
+        .take(25)
+        .map(|(user, title)| {
+            let display = format!("{user}: {title}");
+            poise::serenity_prelude::AutocompleteChoice::new(display, user)
+        })
+        .collect()
+}
+
+/// Autocomplete for remove-song - shows users with songs in the songbook requests
+async fn autocomplete_song_users<'a>(
+    ctx: Context<'_>,
+    partial: &'a str,
+) -> Vec<poise::serenity_prelude::AutocompleteChoice> {
+    let state = ctx.data().read().await;
+    let songleader = state.songleader.read().await;
+
+    // Find the last song for each user
+    let mut user_songs: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for song in &songleader.state.requests {
+        if let Some(queued_by) = &song.queued_by {
+            let title = song.title.as_ref().unwrap_or(&song.id).clone();
+            user_songs.insert(queued_by.clone(), title);
+        }
+    }
+
+    user_songs
+        .into_iter()
+        .filter(|(user, _)| user.to_lowercase().contains(&partial.to_lowercase()))
+        .take(25)
+        .map(|(user, title)| {
+            let display = format!("{user}: {title}");
+            poise::serenity_prelude::AutocompleteChoice::new(display, user)
+        })
+        .collect()
+}
+
+#[poise::command(slash_command, rename = "remove-music")]
+async fn song_remove_music(
+    ctx: Context<'_>,
+    #[description = "Username whose last music queue entry to remove"]
+    #[autocomplete = "autocomplete_music_users"]
+    username: String,
+) -> Result<(), anyhow::Error> {
+    let state = ctx.data().read().await;
+    state
+        .bus
+        .send(Event::Playback(PlaybackAction::RmSongByNick {
+            nick: username.clone(),
+        }));
+    ctx.say(format!("🗑️ Removing last music queued by {username}"))
+        .await?;
+    Ok(())
+}
+
+#[poise::command(slash_command, rename = "remove-song")]
+async fn song_remove_song(
+    ctx: Context<'_>,
+    #[description = "Username whose last songbook request to remove"]
+    #[autocomplete = "autocomplete_song_users"]
+    username: String,
+) -> Result<(), anyhow::Error> {
+    let state = ctx.data().read().await;
+    state
+        .bus
+        .send(Event::Songleader(SongleaderAction::RmSongByNick {
+            nick: username.clone(),
+        }));
+    ctx.say(format!("🗑️ Removing last song requested by {username}"))
+        .await?;
     Ok(())
 }
 
@@ -1262,6 +1572,76 @@ async fn voice_leave(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Show current bot state (admin only)
+#[poise::command(
+    slash_command,
+    rename = "state",
+    required_permissions = "ADMINISTRATOR"
+)]
+async fn bot_state(ctx: Context<'_>) -> Result<(), anyhow::Error> {
+    let state = ctx.data().read().await;
+
+    // Get songleader state
+    let songleader = state.songleader.read().await;
+    let mode_str = match &songleader.state.mode {
+        Mode::Inactive => "Inactive".to_string(),
+        Mode::Starting => "Starting".to_string(),
+        Mode::Tempo { nicks, .. } => format!("Tempo ({}/{} votes)", nicks.len(), NUM_TEMPO_NICKS),
+        Mode::Bingo { nicks, song } => {
+            let title = song.title.clone().unwrap_or_else(|| song.id.clone());
+            format!(
+                "Bingo ({}/{} ready) - {}",
+                nicks.len(),
+                NUM_BINGO_NICKS,
+                title
+            )
+        }
+        Mode::Singing => "Singing".to_string(),
+    };
+    let requests_count = songleader.state.requests.len();
+    let first_songs_count = songleader.state.first_songs.len();
+    let backup_count = songleader.state.backup.len();
+    drop(songleader);
+
+    // Get playback state
+    let playback = state.playback.read().await;
+    let queue_len = playback.state.queued_songs.len();
+    let played_len = playback.state.played_songs.len();
+    let is_playing = playback.state.is_playing;
+    let should_play = playback.state.should_play;
+    let now_playing = playback.state.queued_songs.first().map(|s| s.title.clone());
+    let votes_count = playback.state.song_votes.len();
+    drop(playback);
+
+    let embed = CreateEmbed::new()
+        .title("🔧 Bot State")
+        .color(0x5865f2)
+        .field(
+            "🎤 Songleader",
+            format!(
+                "**Mode:** {}\n**Requests:** {}\n**First songs:** {}\n**Backup:** {}",
+                mode_str, requests_count, first_songs_count, backup_count
+            ),
+            false,
+        )
+        .field(
+            "🎵 Playback",
+            format!(
+                "**Now playing:** {}\n**Queue:** {} songs\n**Played:** {} songs\n**Playing:** {}\n**Should play:** {}\n**Songs with votes:** {}",
+                now_playing.unwrap_or_else(|| "(nothing)".to_string()),
+                queue_len,
+                played_len,
+                if is_playing { "Yes" } else { "No" },
+                if should_play { "Yes" } else { "No" },
+                votes_count
+            ),
+            false,
+        );
+
+    ctx.send(poise::CreateReply::default().embed(embed)).await?;
+    Ok(())
+}
+
 // ============================================================================
 // Rich Embed Builders
 // ============================================================================
@@ -1269,14 +1649,12 @@ async fn voice_leave(ctx: Context<'_>) -> Result<(), anyhow::Error> {
 /// Create a rich embed for queue status (basic version for backwards compatibility)
 pub fn create_queue_embed(
     now_playing: Option<&NowPlayingInfo>,
-    next_up: Option<&Song>,
     queue_length: usize,
     queue_duration_mins: u64,
     is_playing: bool,
 ) -> CreateEmbed {
     create_queue_embed_extended(
         now_playing,
-        next_up,
         &[],
         queue_length,
         queue_duration_mins,
@@ -1287,8 +1665,26 @@ pub fn create_queue_embed(
 /// Create a rich embed for queue status with upcoming songs list
 pub fn create_queue_embed_extended(
     now_playing: Option<&NowPlayingInfo>,
-    next_up: Option<&Song>,
     upcoming_songs: &[Song],
+    queue_length: usize,
+    queue_duration_mins: u64,
+    is_playing: bool,
+) -> CreateEmbed {
+    create_queue_embed_with_votes(
+        now_playing,
+        upcoming_songs,
+        &HashMap::new(),
+        queue_length,
+        queue_duration_mins,
+        is_playing,
+    )
+}
+
+/// Create a rich embed for queue status with upcoming songs list and vote info
+pub fn create_queue_embed_with_votes(
+    now_playing: Option<&NowPlayingInfo>,
+    upcoming_songs: &[Song],
+    song_votes: &HashMap<String, SongVotes>,
     queue_length: usize,
     queue_duration_mins: u64,
     is_playing: bool,
@@ -1320,7 +1716,7 @@ pub fn create_queue_embed_extended(
 
         // Use song title as the embed title (clickable via .url())
         CreateEmbed::new()
-            .title(format!("{status_emoji} {}", song.title))
+            .title(format!("{status_emoji} Now playing: {}", song.title))
             .url(&song.url)
             .color(if is_playing { 0x00ff00 } else { 0xffaa00 })
             .field("👤 Queued by", &song.queued_by, true)
@@ -1333,31 +1729,40 @@ pub fn create_queue_embed_extended(
             .color(0x808080)
     };
 
-    // Add next up
-    if let Some(next) = next_up {
-        embed = embed.field(
-            "⏭️ Next up",
-            format!("[{}]({})", next.title, next.url),
-            false,
-        );
-    }
-
-    // Add upcoming songs list (for Discord only, up to 9 more)
+    // Add upcoming songs list with vote info (for Discord only, up to 9 more)
     if !upcoming_songs.is_empty() {
-        let upcoming_list: Vec<String> = upcoming_songs
+        // Sort by vote score for display (highest first)
+        let mut songs_with_votes: Vec<_> = upcoming_songs
             .iter()
             .enumerate()
-            .map(|(i, song)| {
+            .map(|(orig_pos, song)| {
+                let votes = song_votes.get(&song.id);
+                let score = votes.map(|v| v.score()).unwrap_or(0);
+                (song, orig_pos, score)
+            })
+            .collect();
+
+        songs_with_votes.sort_by(|a, b| b.2.cmp(&a.2));
+
+        let upcoming_list: Vec<String> = songs_with_votes
+            .iter()
+            .enumerate()
+            .map(|(display_pos, (song, orig_pos, _score))| {
+                let votes = song_votes.get(&song.id);
+                let vote_indicator = format_vote_indicator(votes);
+                let pos_change = format_position_change(*orig_pos, display_pos);
                 format!(
-                    "{}. [{}]({}) - {}",
-                    i + 2,
+                    "{}. [{}]({}){}{} - {}",
+                    display_pos + 2,
                     song.title,
                     song.url,
+                    vote_indicator,
+                    pos_change,
                     song.queued_by
                 )
             })
             .collect();
-        embed = embed.field("📋 Coming up", upcoming_list.join("\n"), false);
+        embed = embed.field("📋 Up next", upcoming_list.join("\n"), false);
     }
 
     embed = embed.footer(serenity::CreateEmbedFooter::new(format!(
@@ -1368,13 +1773,33 @@ pub fn create_queue_embed_extended(
     embed
 }
 
+/// Format vote indicator for display (e.g., " (+2)" or " (-1)")
+fn format_vote_indicator(votes: Option<&SongVotes>) -> String {
+    match votes {
+        Some(v) if v.score() > 0 => format!(" 👍+{}", v.score()),
+        Some(v) if v.score() < 0 => format!(" 👎{}", v.score()),
+        _ => String::new(),
+    }
+}
+
+/// Format position change indicator (e.g., " ↑2" or " ↓1")
+fn format_position_change(original_pos: usize, current_pos: usize) -> String {
+    if current_pos < original_pos {
+        format!(" ↑{}", original_pos - current_pos)
+    } else if current_pos > original_pos {
+        format!(" ↓{}", current_pos - original_pos)
+    } else {
+        String::new()
+    }
+}
+
 /// Create a rich embed for song enqueued
 pub fn create_enqueue_embed(song: &Song, time_until_playback_mins: u64) -> CreateEmbed {
     CreateEmbed::new()
         .title(format!("✅ {}", song.title))
         .url(&song.url)
         .color(0x00ff00)
-        .description("Added to queue")
+        .description("Added to queue • React 👍/👎 to move up/down")
         .field("📺 Channel", &song.channel, true)
         .field("👤 Queued by", &song.queued_by, true)
         .field(
