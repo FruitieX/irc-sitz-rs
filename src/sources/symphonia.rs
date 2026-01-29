@@ -2,7 +2,7 @@ use crate::{
     buffer::PlaybackBuffer,
     constants::SAMPLE_RATE,
     event::{Event, EventBus},
-    irc::IrcAction,
+    message::MessageAction,
     mixer::{MixerInput, Sample},
     playback::PlaybackAction,
     youtube::get_yt_media_source_stream,
@@ -61,7 +61,7 @@ fn start_decode_event_loop(bus: EventBus, playback_buf: Arc<Mutex<PlaybackBuffer
                     if let Err(e) = result {
                         let msg = format!("Error during music playback: {}", e);
                         error!("{}", msg);
-                        bus.send(Event::Irc(IrcAction::SendMsg(msg)));
+                        bus.send_message(MessageAction::error(msg));
                         // bus.send(Event::Playback(PlaybackAction::Pause));
                         let mut playback_buf = playback_buf.lock().await;
                         playback_buf.set_eof(true);

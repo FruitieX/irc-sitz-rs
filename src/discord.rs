@@ -16,7 +16,7 @@ use crate::{
     songbook::SongbookSong,
     songleader::SongleaderAction,
     sources::espeak::{Priority, TextToSpeechAction},
-    youtube::get_yt_song_info,
+    youtube::{get_yt_song_info, search_yt},
 };
 use anyhow::Result;
 use poise::serenity_prelude::{
@@ -211,6 +211,8 @@ async fn text_message_to_action(text: &str, nick: &str, config: &Config) -> Opti
             nick: nick.to_string(),
         })),
         "!skål" | "skål" => Some(Event::Songleader(SongleaderAction::Skål)),
+        "!help" => Some(Event::Songleader(SongleaderAction::Help)),
+        "!ls" => Some(Event::Songleader(SongleaderAction::ListSongs)),
         _ => None,
     }
 }
@@ -322,6 +324,10 @@ fn start_outgoing_message_handler(bus: EventBus, state: Arc<RwLock<BotState>>) {
                                     .await
                             }
                             Some(RichContent::Error { message }) => {
+                                // Skip empty error messages
+                                if message.trim().is_empty() {
+                                    continue;
+                                }
                                 let embed = CreateEmbed::new()
                                     .title("❌ Error")
                                     .description(message)
@@ -331,7 +337,10 @@ fn start_outgoing_message_handler(bus: EventBus, state: Arc<RwLock<BotState>>) {
                                     .await
                             }
                             None => {
-                                // Plain text message
+                                // Plain text message - skip if empty
+                                if text.trim().is_empty() {
+                                    continue;
+                                }
                                 channel_id
                                     .send_message(&http, CreateMessage::new().content(&text))
                                     .await
@@ -347,8 +356,13 @@ fn start_outgoing_message_handler(bus: EventBus, state: Arc<RwLock<BotState>>) {
                         text,
                         source,
                     } if source != Platform::Discord => {
+                        // Skip empty messages
+                        if text.trim().is_empty() {
+                            continue;
+                        }
                         // Mirror messages from other platforms
                         let source_name = match source {
+                            #[cfg(feature = "irc")]
                             Platform::Irc => "IRC",
                             Platform::Bot => "Bot",
                             #[allow(unreachable_patterns)]
@@ -377,11 +391,35 @@ fn start_outgoing_message_handler(bus: EventBus, state: Arc<RwLock<BotState>>) {
 // Slash Commands
 // ============================================================================
 
+/// Autocomplete for YouTube search
+async fn autocomplete_youtube<'a>(
+    _ctx: Context<'a>,
+    partial: &'a str,
+) -> Vec<poise::serenity_prelude::AutocompleteChoice> {
+    // Don't search if it looks like a URL
+    if partial.contains("://") || partial.contains("youtu") {
+        return vec![];
+    }
+
+    match search_yt(partial, 10).await {
+        Ok(results) => results
+            .into_iter()
+            .map(|(title, url)| poise::serenity_prelude::AutocompleteChoice::new(title, url))
+            .collect(),
+        Err(e) => {
+            warn!("YouTube autocomplete failed: {e}");
+            vec![]
+        }
+    }
+}
+
 /// Play a YouTube video or search for one
 #[poise::command(slash_command)]
 async fn play(
     ctx: Context<'_>,
-    #[description = "YouTube URL or search terms"] url_or_search: String,
+    #[description = "YouTube URL or search terms"]
+    #[autocomplete = "autocomplete_youtube"]
+    url_or_search: String,
 ) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
     let nick = ctx.author().name.clone();
@@ -411,9 +449,11 @@ async fn play(
             .await?;
         }
         Ok(song) => {
+            let title = song.title.clone();
             state
                 .bus
                 .send(Event::Playback(PlaybackAction::Enqueue { song }));
+            ctx.say(format!("🎵 Added **{title}** to the queue")).await?;
         }
         Err(e) => {
             ctx.say(format!("❌ Error: {e}")).await?;
@@ -567,6 +607,7 @@ async fn help(ctx: Context<'_>) -> Result<(), anyhow::Error> {
 /// Admin commands for the songleader
 #[poise::command(
     slash_command,
+    required_permissions = "ADMINISTRATOR",
     subcommands(
         "song_begin",
         "song_end",
@@ -637,6 +678,7 @@ async fn song_force_singing(ctx: Context<'_>) -> Result<(), anyhow::Error> {
 /// Admin commands for music playback
 #[poise::command(
     slash_command,
+    required_permissions = "ADMINISTRATOR",
     subcommands(
         "music_next",
         "music_prev",

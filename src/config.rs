@@ -3,12 +3,20 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio::fs::read_to_string;
 
+#[cfg(feature = "irc")]
 #[derive(Clone, Deserialize, Serialize)]
 pub struct IrcConfig {
-    pub nickname: String,
-    pub server: String,
-    pub channel: String,
-    pub use_tls: Option<bool>,
+    /// IRC nickname for the bot
+    pub irc_nickname: String,
+
+    /// IRC server hostname
+    pub irc_server: String,
+
+    /// IRC channel to join
+    pub irc_channel: String,
+
+    /// Whether to use TLS for the IRC connection
+    pub irc_use_tls: Option<bool>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -34,8 +42,9 @@ pub struct DiscordConfig {
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Config {
+    #[cfg(feature = "irc")]
     #[serde(flatten)]
-    pub irc: IrcConfig,
+    pub irc: Option<IrcConfig>,
 
     #[serde(flatten)]
     pub songbook: SongbookConfig,

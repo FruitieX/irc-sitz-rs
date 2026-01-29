@@ -1,4 +1,5 @@
 use crate::{
+    config::IrcConfig,
     event::{Event, EventBus},
     message::{MessageAction, Platform},
     mixer::MixerAction,
@@ -41,14 +42,27 @@ impl IrcConnectionState {
     }
 }
 
-pub async fn init(bus: &EventBus, config: &crate::config::Config) -> Result<()> {
+pub async fn init(
+    bus: &EventBus,
+    config: &crate::config::Config,
+    irc_config: &IrcConfig,
+) -> Result<()> {
     let connection_state = Arc::new(RwLock::new(IrcConnectionState::new()));
 
     // Spawn the connection manager that handles reconnection with exponential backoff
-    start_connection_manager(bus.clone(), config.clone(), connection_state.clone());
+    start_connection_manager(
+        bus.clone(),
+        config.clone(),
+        irc_config.clone(),
+        connection_state.clone(),
+    );
 
     // Spawn the outgoing message handler
-    start_outgoing_message_handler(bus.clone(), config.irc.channel.clone(), connection_state);
+    start_outgoing_message_handler(
+        bus.clone(),
+        irc_config.irc_channel.clone(),
+        connection_state,
+    );
 
     Ok(())
 }
@@ -63,15 +77,19 @@ pub async fn init(bus: &EventBus, config: &crate::config::Config) -> Result<()> 
 fn start_connection_manager(
     bus: EventBus,
     config: crate::config::Config,
+    irc_config: IrcConfig,
     connection_state: Arc<RwLock<IrcConnectionState>>,
 ) {
     tokio::spawn(async move {
         let mut reconnect_delay = RECONNECT_INITIAL_DELAY;
 
         loop {
-            info!("Attempting to connect to IRC server: {}", config.irc.server);
+            info!(
+                "Attempting to connect to IRC server: {}",
+                irc_config.irc_server
+            );
 
-            match connect_and_run(&bus, &config, &connection_state).await {
+            match connect_and_run(&bus, &config, &irc_config, &connection_state).await {
                 Ok(()) => {
                     // Connection closed gracefully (unlikely in normal operation)
                     info!("IRC connection closed, will reconnect");
@@ -108,16 +126,17 @@ fn start_connection_manager(
 async fn connect_and_run(
     bus: &EventBus,
     config: &crate::config::Config,
+    irc_config: &IrcConfig,
     connection_state: &Arc<RwLock<IrcConnectionState>>,
 ) -> Result<()> {
-    let irc_config = Config {
-        nickname: Some(config.irc.nickname.clone()),
-        server: Some(config.irc.server.clone()),
-        channels: vec![config.irc.channel.clone()],
+    let irc_client_config = Config {
+        nickname: Some(irc_config.irc_nickname.clone()),
+        server: Some(irc_config.irc_server.clone()),
+        channels: vec![irc_config.irc_channel.clone()],
         ..Default::default()
     };
 
-    let mut client = Client::from_config(irc_config).await?;
+    let mut client = Client::from_config(irc_client_config).await?;
     let irc_sender = client.sender();
 
     client.identify()?;
@@ -130,11 +149,11 @@ async fn connect_and_run(
 
     info!(
         "Successfully connected to IRC server: {}",
-        config.irc.server
+        irc_config.irc_server
     );
 
     let mut stream = client.stream()?;
-    let irc_channel = config.irc.channel.clone();
+    let irc_channel = irc_config.irc_channel.clone();
 
     // Process incoming IRC messages until the stream ends
     while let Some(message_result) = stream.next().await {

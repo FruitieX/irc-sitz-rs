@@ -104,3 +104,40 @@ pub async fn get_yt_song_info(url_or_search_terms: String, queued_by: String) ->
         queued_by,
     })
 }
+
+/// Search YouTube and return multiple results for autocomplete
+pub async fn search_yt(query: &str, max_results: usize) -> Result<Vec<(String, String)>> {
+    if query.trim().is_empty() {
+        return Ok(vec![]);
+    }
+
+    let output = YoutubeDl::new(format!("ytsearch{max_results}:{query}"))
+        .youtube_dl_path("./yt-dlp")
+        .extra_arg("--flat-playlist")
+        .extra_arg("--no-playlist")
+        .run_async()
+        .await?;
+
+    let playlist = match output.into_playlist() {
+        Some(p) => p,
+        None => return Ok(vec![]),
+    };
+
+    let entries = playlist.entries.unwrap_or_default();
+
+    Ok(entries
+        .into_iter()
+        .filter_map(|v| {
+            let title = v.title?;
+            let id = v.id;
+            let url = format!("https://youtu.be/{id}");
+            // Truncate title if too long for Discord's 100 char limit
+            let display = if title.len() > 95 {
+                format!("{}...", &title[..92])
+            } else {
+                title
+            };
+            Some((display, url))
+        })
+        .collect())
+}

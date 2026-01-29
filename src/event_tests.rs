@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod tests {
     use crate::event::{Event, EventBus};
+    #[cfg(feature = "irc")]
     use crate::irc::IrcAction;
     use crate::playback::PlaybackAction;
     use std::time::Duration;
@@ -15,6 +16,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "irc")]
     fn test_event_bus_send_receive() {
         let bus = EventBus::new();
         let mut subscriber = bus.subscribe();
@@ -79,6 +81,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "irc")]
     fn test_event_clone() {
         let event = Event::Irc(IrcAction::SendMsg("clone test".to_string()));
         let cloned = event.clone();
@@ -99,6 +102,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "irc")]
     fn test_event_variants() {
         use crate::mixer::MixerAction;
         use crate::songleader::SongleaderAction;

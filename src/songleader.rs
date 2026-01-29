@@ -255,7 +255,7 @@ impl SongleaderState {
 
 pub struct Songleader {
     /// Current state of the songleader
-    state: SongleaderState,
+    pub state: SongleaderState,
 
     /// Send and receive events to/from the rest of the app
     bus: EventBus,
@@ -270,6 +270,15 @@ impl Songleader {
 
         debug!("Initial songleader state:\n{:#?}", state);
 
+        Self {
+            state,
+            bus: bus.clone(),
+            config: config.clone(),
+        }
+    }
+
+    /// Creates a new [Songleader] with a specific initial state (for testing)
+    pub fn create_with_state(bus: &EventBus, config: &Config, state: SongleaderState) -> Self {
         Self {
             state,
             bus: bus.clone(),
@@ -572,7 +581,7 @@ fn handle_incoming_event_loop(bus: EventBus, config: Config, songleader: Arc<RwL
 }
 
 /// Decide what to do based on the incoming event
-async fn handle_incoming_event(
+pub async fn handle_incoming_event(
     _bus: EventBus,
     config: Config,
     songleader_rwlock: Arc<RwLock<Songleader>>,

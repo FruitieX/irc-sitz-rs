@@ -1,4 +1,7 @@
-use irc_sitz_rs::{config, event, irc, mixer, net, playback, songleader, sources, youtube};
+use irc_sitz_rs::{config, event, mixer, net, playback, songleader, sources, youtube};
+
+#[cfg(feature = "irc")]
+use irc_sitz_rs::irc;
 
 #[cfg(feature = "discord")]
 use irc_sitz_rs::discord;
@@ -27,7 +30,10 @@ async fn main() -> anyhow::Result<()> {
 
     youtube::init().await?;
     playback::init(&bus).await;
-    irc::init(&bus, &config).await?;
+    #[cfg(feature = "irc")]
+    if let Some(ref irc_config) = config.irc {
+        irc::init(&bus, &config, irc_config).await?;
+    }
     songleader::init(&bus, &config).await;
     net::init(mixer_output);
     event::debug(&bus);

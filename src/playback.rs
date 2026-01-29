@@ -130,7 +130,10 @@ impl PlaybackState {
             // Atomically rename temp file to actual file
             // This ensures we never have a partially written state file
             if let Err(e) = tokio::fs::rename(PLAYBACK_STATE_FILE_TMP, PLAYBACK_STATE_FILE).await {
-                error!("Error while renaming playback state file: {:?}", e);
+                // NotFound is expected on first run when no state exists yet
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    error!("Error while renaming playback state file: {:?}", e);
+                }
             }
         });
     }

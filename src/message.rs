@@ -4,6 +4,7 @@ use crate::songbook::SongbookSong;
 /// Platform from which a message originates or to which it is targeted
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Platform {
+    #[cfg(feature = "irc")]
     Irc,
     #[cfg(feature = "discord")]
     Discord,

@@ -8,7 +8,9 @@ use std::time::Duration;
 use tokio::sync::broadcast::error::TryRecvError;
 
 // Re-export key types from the main crate
-pub use irc_sitz_rs::config::{Config, IrcConfig, SongbookConfig};
+#[cfg(feature = "irc")]
+pub use irc_sitz_rs::config::IrcConfig;
+pub use irc_sitz_rs::config::{Config, SongbookConfig};
 pub use irc_sitz_rs::event::{Event, EventBus, Subscriber};
 pub use irc_sitz_rs::message::{MessageAction, Platform, RichContent};
 pub use irc_sitz_rs::mixer::MixerAction;
@@ -21,12 +23,13 @@ pub use irc_sitz_rs::sources::symphonia::SymphoniaAction;
 /// Creates a test configuration with localhost defaults.
 pub fn test_config() -> Config {
     Config {
-        irc: IrcConfig {
-            nickname: "testbot".to_string(),
-            server: "localhost".to_string(),
-            channel: "#test".to_string(),
-            use_tls: None,
-        },
+        #[cfg(feature = "irc")]
+        irc: Some(IrcConfig {
+            irc_nickname: "testbot".to_string(),
+            irc_server: "localhost".to_string(),
+            irc_channel: "#test".to_string(),
+            irc_use_tls: None,
+        }),
         songbook: SongbookConfig {
             songbook_url: "https://example-songbook.com".to_string(),
             songbook_re: Regex::new(r"(https?://)?example-songbook\.com/(.+)").unwrap(),

@@ -7,10 +7,12 @@
 mod common;
 
 use common::*;
+#[cfg(feature = "irc")]
 use irc_sitz_rs::irc::IrcAction;
 
 /// Test IrcAction::SendMsg can be created and sent through bus.
 #[tokio::test]
+#[cfg(feature = "irc")]
 async fn test_irc_action_send_msg() {
     let harness = TestHarness::new();
     let mut subscriber = harness.bus().subscribe();

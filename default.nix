@@ -26,4 +26,5 @@ in
       espeak-ng
     ];
     LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
+    LD_LIBRARY_PATH = "${espeak-ng}/lib";
   }

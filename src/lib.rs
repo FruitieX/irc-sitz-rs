@@ -10,6 +10,7 @@ pub mod buffer;
 pub mod config;
 pub mod constants;
 pub mod event;
+#[cfg(feature = "irc")]
 pub mod irc;
 pub mod message;
 pub mod mixer;

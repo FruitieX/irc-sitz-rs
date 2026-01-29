@@ -7,6 +7,7 @@ edition = "2021"
 
 [features]
 default = []
+irc = ["dep:irc"]
 discord = ["serenity", "poise"]
 
 [dependencies]
@@ -21,7 +22,7 @@ irc = { version = "1.1", default-features = false, features = [
 	"tls-rust",
 	"toml",
 	"toml_config",
-] }
+], optional = true }
 itertools = "0.14"
 lazy_static = "1.5"
 log = "0.4"

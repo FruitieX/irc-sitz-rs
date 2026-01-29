@@ -1,3 +1,4 @@
+#[cfg(feature = "irc")]
 use crate::irc::IrcAction;
 use crate::message::{MessageAction, Platform};
 use crate::playback::PlaybackAction;
@@ -84,6 +85,7 @@ pub enum Event {
     Mixer(MixerAction),
     Symphonia(SymphoniaAction),
     Playback(PlaybackAction),
+    #[cfg(feature = "irc")]
     Irc(IrcAction),
     Songleader(SongleaderAction),
     /// Platform-agnostic message events
