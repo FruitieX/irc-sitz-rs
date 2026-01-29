@@ -1,61 +1,14 @@
 //! Integration tests for audio pipeline.
 //!
-//! Tests for mixer, TTS, and audio source handling.
+//! Tests for TTS and audio source handling.
+//! Note: Mixer no longer uses event-driven ducking - it's automatic based on TTS buffer content.
 
 mod common;
 
 use common::*;
-use irc_sitz_rs::mixer::MixerAction;
-use irc_sitz_rs::sources::espeak::{Priority, TextToSpeechAction};
 use irc_sitz_rs::buffer::PlaybackBuffer;
-
-/// Test MixerAction duck/unduck variants.
-#[tokio::test]
-async fn test_mixer_action_duck_variants() {
-    let actions = vec![
-        MixerAction::DuckSecondaryChannels,
-        MixerAction::UnduckSecondaryChannels,
-    ];
-
-    for action in actions {
-        let debug_str = format!("{:?}", action);
-        assert!(!debug_str.is_empty());
-    }
-}
-
-/// Test MixerAction volume control variants.
-#[tokio::test]
-async fn test_mixer_action_volume_variants() {
-    let actions = vec![
-        MixerAction::SetSecondaryChannelVolume(0.0),
-        MixerAction::SetSecondaryChannelVolume(0.5),
-        MixerAction::SetSecondaryChannelVolume(1.0),
-        MixerAction::SetSecondaryChannelDuckedVolume(0.0),
-        MixerAction::SetSecondaryChannelDuckedVolume(0.2),
-        MixerAction::SetSecondaryChannelDuckedVolume(1.0),
-    ];
-
-    for action in actions {
-        let debug_str = format!("{:?}", action);
-        assert!(debug_str.contains("Volume") || debug_str.contains("Set"));
-    }
-}
-
-/// Test mixer events can be sent via event bus.
-#[tokio::test]
-async fn test_mixer_events_through_bus() {
-    let bus = EventBus::new();
-    let mut subscriber = bus.subscribe();
-
-    bus.send(Event::Mixer(MixerAction::DuckSecondaryChannels));
-
-    let event = subscriber.try_recv().unwrap();
-    if let Event::Mixer(MixerAction::DuckSecondaryChannels) = event {
-        // Expected
-    } else {
-        panic!("Expected Mixer DuckSecondaryChannels event");
-    }
-}
+use irc_sitz_rs::sources::espeak::{Priority, TextToSpeechAction};
+use irc_sitz_rs::sources::Sample;
 
 /// Test TTS Priority enum variants.
 #[tokio::test]
@@ -133,30 +86,24 @@ async fn test_tts_events_through_bus() {
 #[tokio::test]
 async fn test_playback_buffer_default() {
     let buffer = PlaybackBuffer::default();
-    // Default buffer should be empty - next_sample returns None
-    let mut buffer = buffer;
-    assert!(buffer.next_sample().is_none());
+    assert!(!buffer.has_data());
 }
 
-/// Test PlaybackBuffer push and pop samples.
+/// Test PlaybackBuffer push and pull samples.
 #[tokio::test]
-async fn test_playback_buffer_push_pop() {
+async fn test_playback_buffer_push_pull() {
     let mut buffer = PlaybackBuffer::default();
 
     // Push some samples
-    let samples: Vec<(i16, i16)> = vec![(100, -100), (200, -200), (300, -300)];
-    buffer.push_samples(samples.clone());
+    let samples: Vec<Sample> = vec![(100, -100), (200, -200), (300, -300)];
+    buffer.push_samples(samples);
 
-    // Pop them back
-    let sample1 = buffer.next_sample();
-    let sample2 = buffer.next_sample();
-    let sample3 = buffer.next_sample();
-    let sample4 = buffer.next_sample(); // Should be None
+    // Pull them back
+    let pulled = buffer.pull_samples(3);
+    assert_eq!(pulled, vec![(100, -100), (200, -200), (300, -300)]);
 
-    assert_eq!(sample1, Some((100, -100)));
-    assert_eq!(sample2, Some((200, -200)));
-    assert_eq!(sample3, Some((300, -300)));
-    assert_eq!(sample4, None);
+    // Buffer should be empty after reading all samples
+    assert!(!buffer.has_data());
 }
 
 /// Test PlaybackBuffer clear.
@@ -165,14 +112,14 @@ async fn test_playback_buffer_clear() {
     let mut buffer = PlaybackBuffer::default();
 
     // Push samples
-    let samples: Vec<(i16, i16)> = vec![(100, 100), (200, 200)];
+    let samples: Vec<Sample> = vec![(100, 100), (200, 200)];
     buffer.push_samples(samples);
 
     // Clear buffer
     buffer.clear();
 
-    // Should be empty
-    assert!(buffer.next_sample().is_none());
+    // Should have no data
+    assert!(!buffer.has_data());
 }
 
 /// Test volume levels are within expected range.
@@ -188,18 +135,6 @@ async fn test_volume_range_constraints() {
         // We just verify the values are reasonable
         assert!(vol <= 2.0);
     }
-}
-
-/// Test MixerAction clone behavior.
-#[tokio::test]
-async fn test_mixer_action_clone() {
-    let action = MixerAction::SetSecondaryChannelVolume(0.75);
-    let cloned = action.clone();
-
-    // Verify clone matches original
-    let orig_debug = format!("{:?}", action);
-    let clone_debug = format!("{:?}", cloned);
-    assert_eq!(orig_debug, clone_debug);
 }
 
 /// Test TTS action clone behavior.
@@ -220,56 +155,10 @@ async fn test_tts_action_clone() {
 #[tokio::test]
 async fn test_sample_type() {
     // Sample is (i16, i16) for stereo
-    let sample: irc_sitz_rs::mixer::Sample = (i16::MAX, i16::MIN);
+    let sample: Sample = (i16::MAX, i16::MIN);
 
     assert_eq!(sample.0, i16::MAX);
     assert_eq!(sample.1, i16::MIN);
-}
-
-/// Test multiple sequential duck/unduck events.
-#[tokio::test]
-async fn test_sequential_duck_unduck() {
-    let bus = EventBus::new();
-    let mut subscriber = bus.subscribe();
-
-    // Send multiple duck/unduck events
-    bus.send(Event::Mixer(MixerAction::DuckSecondaryChannels));
-    bus.send(Event::Mixer(MixerAction::UnduckSecondaryChannels));
-    bus.send(Event::Mixer(MixerAction::DuckSecondaryChannels));
-
-    // Receive all events
-    let event1 = subscriber.try_recv().unwrap();
-    let event2 = subscriber.try_recv().unwrap();
-    let event3 = subscriber.try_recv().unwrap();
-
-    // Verify order
-    matches!(event1, Event::Mixer(MixerAction::DuckSecondaryChannels));
-    matches!(event2, Event::Mixer(MixerAction::UnduckSecondaryChannels));
-    matches!(event3, Event::Mixer(MixerAction::DuckSecondaryChannels));
-}
-
-/// Test volume adjustment events in sequence.
-#[tokio::test]
-async fn test_volume_adjustment_sequence() {
-    let bus = EventBus::new();
-    let mut subscriber = bus.subscribe();
-
-    // Normal volume
-    bus.send(Event::Mixer(MixerAction::SetSecondaryChannelVolume(0.75)));
-    // Ducked volume
-    bus.send(Event::Mixer(MixerAction::SetSecondaryChannelDuckedVolume(0.2)));
-    // Duck
-    bus.send(Event::Mixer(MixerAction::DuckSecondaryChannels));
-    // Unduck
-    bus.send(Event::Mixer(MixerAction::UnduckSecondaryChannels));
-
-    // All events should be received
-    for _ in 0..4 {
-        assert!(subscriber.try_recv().is_ok());
-    }
-
-    // No more events
-    assert!(subscriber.try_recv().is_err());
 }
 
 /// Test empty text TTS action.
@@ -306,17 +195,27 @@ async fn test_playback_buffer_large() {
     let mut buffer = PlaybackBuffer::default();
 
     // Push many samples
-    let samples: Vec<(i16, i16)> = (0..10000).map(|i| (i as i16, -(i as i16))).collect();
-    buffer.push_samples(samples.clone());
+    let samples: Vec<Sample> = (0..10000).map(|i| (i as i16, -(i as i16))).collect();
+    buffer.push_samples(samples);
 
-    // Verify first and last samples
-    assert_eq!(buffer.next_sample(), Some((0, 0)));
+    // Pull all samples
+    let pulled = buffer.pull_samples(10000);
+    assert_eq!(pulled.first(), Some(&(0, 0)));
+    assert_eq!(pulled.last(), Some(&(9999, -9999)));
+    assert!(!buffer.has_data());
+}
 
-    // Skip to near the end
-    for _ in 0..9998 {
-        buffer.next_sample();
-    }
+/// Test PlaybackBuffer pull pads with silence when not enough samples.
+#[tokio::test]
+async fn test_playback_buffer_pull_pads_silence() {
+    let mut buffer = PlaybackBuffer::default();
 
-    assert_eq!(buffer.next_sample(), Some((9999, -9999)));
-    assert!(buffer.next_sample().is_none());
+    buffer.push_samples(vec![(100, 100), (200, 200)]);
+
+    // Request more samples than available
+    let pulled = buffer.pull_samples(5);
+    assert_eq!(
+        pulled,
+        vec![(100, 100), (200, 200), (0, 0), (0, 0), (0, 0)]
+    );
 }

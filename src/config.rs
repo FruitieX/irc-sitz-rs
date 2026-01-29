@@ -38,6 +38,9 @@ pub struct DiscordConfig {
 
     /// Guild (server) ID for registering slash commands
     pub discord_guild_id: u64,
+
+    /// Voice channel ID for streaming audio (optional, auto-joins if set)
+    pub discord_voice_channel_id: Option<u64>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]

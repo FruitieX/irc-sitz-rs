@@ -3,10 +3,7 @@ use crate::irc::IrcAction;
 use crate::message::{MessageAction, Platform};
 use crate::playback::PlaybackAction;
 use crate::songleader::SongleaderAction;
-use crate::{
-    mixer::MixerAction,
-    sources::{espeak::TextToSpeechAction, symphonia::SymphoniaAction},
-};
+use crate::sources::{espeak::TextToSpeechAction, symphonia::SymphoniaAction};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::broadcast::{self, Receiver, Sender};
 
@@ -82,7 +79,6 @@ impl Subscriber {
 #[derive(Clone, Debug)]
 pub enum Event {
     TextToSpeech(TextToSpeechAction),
-    Mixer(MixerAction),
     Symphonia(SymphoniaAction),
     Playback(PlaybackAction),
     #[cfg(feature = "irc")]

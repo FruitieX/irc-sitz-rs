@@ -1,4 +1,9 @@
-use irc_sitz_rs::{config, event, mixer, net, playback, songleader, sources, youtube};
+use irc_sitz_rs::{config, event, mixer, playback, songleader, sources, youtube};
+
+#[cfg(feature = "discord")]
+use std::sync::Arc;
+#[cfg(feature = "discord")]
+use std::sync::Mutex as StdMutex;
 
 #[cfg(feature = "irc")]
 use irc_sitz_rs::irc;
@@ -8,42 +13,42 @@ use irc_sitz_rs::discord;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Install rustls crypto provider before any TLS operations
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     pretty_env_logger::init_timed();
 
     let config = config::load().await?;
     let bus = event::EventBus::new();
 
-    // let sine_source1 = sources::sine::init(440.0);
-    // let sine_source2 = sources::sine::init(640.0);
-    let espeak_source = sources::espeak::init(&bus);
-    let symphonia_source = sources::symphonia::init(&bus).await?;
-
-    let mixer_output = mixer::init(
-        &bus,
-        vec![
-            espeak_source,
-            symphonia_source,
-            // sine_source1,
-            // sine_source2
-        ],
-    )?;
+    // Initialize audio sources - they write to shared buffers
+    let tts_buffer = sources::espeak::init(&bus);
+    let music_buffer = sources::symphonia::init(&bus).await?;
 
     youtube::init().await?;
     playback::init(&bus).await;
+
     #[cfg(feature = "irc")]
     if let Some(ref irc_config) = config.irc {
         irc::init(&bus, &config, irc_config).await?;
     }
+
     songleader::init(&bus, &config).await;
-    net::init(mixer_output);
     event::debug(&bus);
 
     #[cfg(feature = "discord")]
     if let Some(ref discord_config) = config.discord {
-        discord::init(&bus, &config, discord_config).await?;
+        // Create the mixer with both audio sources
+        let mixer = Arc::new(StdMutex::new(mixer::Mixer::new(
+            tts_buffer.clone(),
+            music_buffer.clone(),
+        )));
+
+        discord::init(&bus, &config, discord_config, mixer).await?;
     }
 
-    // stdin::init(&bus);
     tokio::signal::ctrl_c().await?;
 
     Ok(())

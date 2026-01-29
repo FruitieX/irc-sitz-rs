@@ -14,7 +14,6 @@ pub mod event;
 pub mod irc;
 pub mod message;
 pub mod mixer;
-pub mod net;
 pub mod playback;
 pub mod songbook;
 pub mod songleader;

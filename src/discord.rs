@@ -6,22 +6,27 @@
 //! - Rich embeds for queue status, song info, etc.
 //! - Reaction-based bingo (react to signal you found the song)
 //! - Song request autocomplete dropdown
+//! - Voice channel audio streaming
 
 use crate::{
     config::{Config, DiscordConfig},
     event::{Event, EventBus},
     message::{CountdownValue, MessageAction, NowPlayingInfo, Platform, RichContent},
-    mixer::MixerAction,
+    mixer::Mixer,
     playback::{PlaybackAction, Song, MAX_SONG_DURATION},
     songbook::SongbookSong,
     songleader::SongleaderAction,
-    sources::espeak::{Priority, TextToSpeechAction},
+    sources::{
+        espeak::{Priority, TextToSpeechAction},
+        Sample,
+    },
     youtube::{get_yt_song_info, search_yt},
 };
 use anyhow::Result;
 use poise::serenity_prelude::{
     self as serenity, ChannelId, CreateEmbed, CreateMessage, GuildId, Http,
 };
+use songbird::{input::Input, tracks::Track, SerenityInit};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -34,14 +39,110 @@ struct BotState {
     bingo_message_id: Option<serenity::MessageId>,
     /// HTTP client for sending messages (set when bot is ready)
     http: Option<Arc<Http>>,
+    /// Pull-based mixer for voice channel streaming
+    mixer: Arc<StdMutex<Mixer>>,
 }
 
 type Context<'a> = poise::Context<'a, Arc<RwLock<BotState>>, anyhow::Error>;
 
+// ============================================================================
+// Voice Audio Source
+// ============================================================================
+
+use songbird::input::RawAdapter;
+use std::{
+    io::{Read, Seek, SeekFrom},
+    sync::Mutex as StdMutex,
+};
+use symphonia::core::io::MediaSource;
+
+/// Pull-based audio source that reads from Mixer on-demand.
+/// Songbird's audio thread calls Read::read() which pulls mixed audio from source buffers.
+struct MixerAudioSource {
+    mixer: Arc<StdMutex<Mixer>>,
+}
+
+impl MixerAudioSource {
+    fn new(mixer: Arc<StdMutex<Mixer>>) -> Self {
+        Self { mixer }
+    }
+}
+
+/// Convert i16 stereo samples to f32 bytes directly into output buffer
+fn samples_to_f32_bytes_into(samples: &[Sample], buf: &mut [u8]) -> usize {
+    let mut offset = 0;
+    for (left, right) in samples {
+        let left_f32 = *left as f32 / 32768.0;
+        let right_f32 = *right as f32 / 32768.0;
+
+        if offset + 8 <= buf.len() {
+            buf[offset..offset + 4].copy_from_slice(&left_f32.to_le_bytes());
+            buf[offset + 4..offset + 8].copy_from_slice(&right_f32.to_le_bytes());
+            offset += 8;
+        }
+    }
+    offset
+}
+
+impl Read for MixerAudioSource {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // Calculate how many samples we need (f32 stereo = 8 bytes per sample)
+        let samples_needed = buf.len() / 8;
+
+        // Pull samples from the mixer
+        let samples = if let Ok(mut mixer) = self.mixer.lock() {
+            mixer.pull_samples(samples_needed)
+        } else {
+            vec![(0i16, 0i16); samples_needed]
+        };
+
+        // Convert to f32 bytes
+        let bytes_written = samples_to_f32_bytes_into(&samples, buf);
+
+        // Pad with silence if needed
+        if bytes_written < buf.len() {
+            buf[bytes_written..].fill(0);
+        }
+
+        Ok(buf.len())
+    }
+}
+
+impl Seek for MixerAudioSource {
+    fn seek(&mut self, _pos: SeekFrom) -> std::io::Result<u64> {
+        // Live audio source doesn't support seeking
+        Ok(0)
+    }
+}
+
+impl MediaSource for MixerAudioSource {
+    fn is_seekable(&self) -> bool {
+        false
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        None
+    }
+}
+
+/// Create a songbird Input from the mixer
+fn create_voice_input(mixer: Arc<StdMutex<Mixer>>) -> Input {
+    let source = MixerAudioSource::new(mixer);
+    let adapter = RawAdapter::new(source, 48000, 2);
+
+    adapter.into()
+}
+
 /// Initialize the Discord bot
-pub async fn init(bus: &EventBus, config: &Config, discord_config: &DiscordConfig) -> Result<()> {
+pub async fn init(
+    bus: &EventBus,
+    config: &Config,
+    discord_config: &DiscordConfig,
+    mixer: Arc<StdMutex<Mixer>>,
+) -> Result<()> {
     let channel_id = ChannelId::new(discord_config.discord_channel_id);
     let guild_id = GuildId::new(discord_config.discord_guild_id);
+    let voice_channel_id = discord_config.discord_voice_channel_id.map(ChannelId::new);
     let token = discord_config.discord_token.clone();
 
     let state = Arc::new(RwLock::new(BotState {
@@ -50,12 +151,14 @@ pub async fn init(bus: &EventBus, config: &Config, discord_config: &DiscordConfi
         channel_id,
         bingo_message_id: None,
         http: None,
+        mixer: mixer.clone(),
     }));
 
     // Start the outgoing message handler
     start_outgoing_message_handler(bus.clone(), state.clone());
 
     let state_for_setup = state.clone();
+    let mixer_for_setup = mixer;
 
     // Build the poise framework with slash commands
     let framework = poise::Framework::builder()
@@ -73,12 +176,15 @@ pub async fn init(bus: &EventBus, config: &Config, discord_config: &DiscordConfi
                 help(),
                 song_admin(),
                 music_admin(),
+                voice_admin(),
             ],
             event_handler: |ctx, event, _framework, data| Box::pin(event_handler(ctx, event, data)),
             ..Default::default()
         })
         .setup(move |ctx, _ready, framework| {
             let state = state_for_setup.clone();
+            let mixer = mixer_for_setup.clone();
+            let voice_channel_id = voice_channel_id;
             Box::pin(async move {
                 // Store the HTTP client for message sending
                 {
@@ -89,6 +195,27 @@ pub async fn init(bus: &EventBus, config: &Config, discord_config: &DiscordConfi
                 // Register commands for the specific guild (faster updates during development)
                 poise::builtins::register_in_guild(ctx, &framework.options().commands, guild_id)
                     .await?;
+
+                // Auto-join voice channel if configured
+                if let Some(vc_id) = voice_channel_id {
+                    let manager = songbird::get(ctx)
+                        .await
+                        .expect("Songbird Voice client placed in at initialisation.");
+
+                    match manager.join(guild_id, vc_id).await {
+                        Ok(handler_lock) => {
+                            let mut handler = handler_lock.lock().await;
+                            let input = create_voice_input(mixer.clone());
+                            let track = Track::new(input);
+                            handler.play_only(track);
+                            info!("Auto-joined voice channel {}", vc_id);
+                        }
+                        Err(e) => {
+                            error!("Failed to auto-join voice channel: {:?}", e);
+                        }
+                    }
+                }
+
                 info!("Discord bot ready and commands registered!");
                 Ok(state)
             })
@@ -98,10 +225,12 @@ pub async fn init(bus: &EventBus, config: &Config, discord_config: &DiscordConfi
     // Build and start the serenity client
     let intents = serenity::GatewayIntents::GUILD_MESSAGES
         | serenity::GatewayIntents::MESSAGE_CONTENT
-        | serenity::GatewayIntents::GUILD_MESSAGE_REACTIONS;
+        | serenity::GatewayIntents::GUILD_MESSAGE_REACTIONS
+        | serenity::GatewayIntents::GUILD_VOICE_STATES;
 
     let client = serenity::ClientBuilder::new(&token, intents)
         .framework(framework)
+        .register_songbird()
         .await?;
 
     // Spawn the Discord client in a separate task
@@ -453,7 +582,8 @@ async fn play(
             state
                 .bus
                 .send(Event::Playback(PlaybackAction::Enqueue { song }));
-            ctx.say(format!("🎵 Added **{title}** to the queue")).await?;
+            ctx.say(format!("🎵 Added **{title}** to the queue"))
+                .await?;
         }
         Err(e) => {
             ctx.say(format!("❌ Error: {e}")).await?;
@@ -726,15 +856,105 @@ async fn music_resume(ctx: Context<'_>) -> Result<(), anyhow::Error> {
 #[poise::command(slash_command, rename = "volume")]
 async fn music_volume(
     ctx: Context<'_>,
-    #[description = "Volume level (0.0 - 1.0)"] volume: f64,
+    #[description = "Volume level (0.0 - 1.0)"] _volume: f64,
 ) -> Result<(), anyhow::Error> {
-    let state = ctx.data().read().await;
-    let volume = volume.clamp(0.0, 1.0);
-    state
-        .bus
-        .send(Event::Mixer(MixerAction::SetSecondaryChannelVolume(volume)));
-    ctx.say(format!("🔊 Volume set to {:.0}%", volume * 100.0))
+    // Volume control is now automatic via ducking
+    ctx.say("🔊 Volume is now automatically controlled (music ducks when TTS plays)")
         .await?;
+    Ok(())
+}
+
+/// Admin commands for voice channel
+#[poise::command(
+    slash_command,
+    required_permissions = "ADMINISTRATOR",
+    subcommands("voice_join", "voice_leave")
+)]
+async fn voice_admin(_ctx: Context<'_>) -> Result<(), anyhow::Error> {
+    Ok(())
+}
+
+#[poise::command(slash_command, rename = "join")]
+async fn voice_join(
+    ctx: Context<'_>,
+    #[description = "Voice channel ID to join"] channel_id: Option<String>,
+) -> Result<(), anyhow::Error> {
+    let guild_id = ctx
+        .guild_id()
+        .ok_or_else(|| anyhow::anyhow!("Not in a guild"))?;
+
+    // Try to get channel from argument, or from user's current voice channel
+    let vc_id = if let Some(id_str) = channel_id {
+        ChannelId::new(id_str.parse()?)
+    } else {
+        // Try to find user's current voice channel
+        let guild = ctx
+            .guild()
+            .ok_or_else(|| anyhow::anyhow!("Could not get guild"))?;
+        let user_id = ctx.author().id;
+        let channel = guild
+            .voice_states
+            .get(&user_id)
+            .and_then(|state| state.channel_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!("You must be in a voice channel or provide a channel ID")
+            })?;
+        channel
+    };
+
+    ctx.defer().await?;
+
+    let manager = songbird::get(ctx.serenity_context())
+        .await
+        .expect("Songbird Voice client placed in at initialisation.");
+
+    // Get the mixer from state
+    let mixer = {
+        let state = ctx.data().read().await;
+        state.mixer.clone()
+    };
+
+    // Leave current channel if in one
+    let _ = manager.leave(guild_id).await;
+
+    match manager.join(guild_id, vc_id).await {
+        Ok(handler_lock) => {
+            let mut handler = handler_lock.lock().await;
+            let input = create_voice_input(mixer);
+            let track = Track::new(input);
+            handler.play_only(track);
+            ctx.say(format!("🔊 Joined voice channel <#{}>", vc_id))
+                .await?;
+        }
+        Err(e) => {
+            ctx.say(format!("❌ Failed to join voice channel: {}", e))
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+#[poise::command(slash_command, rename = "leave")]
+async fn voice_leave(ctx: Context<'_>) -> Result<(), anyhow::Error> {
+    let guild_id = ctx
+        .guild_id()
+        .ok_or_else(|| anyhow::anyhow!("Not in a guild"))?;
+
+    let manager = songbird::get(ctx.serenity_context())
+        .await
+        .expect("Songbird Voice client placed in at initialisation.");
+
+    match manager.leave(guild_id).await {
+        Ok(_) => {
+            ctx.say("🔇 Left voice channel").await?;
+        }
+        Err(e) => {
+            ctx.say(format!("❌ Failed to leave voice channel: {}", e))
+                .await?;
+        }
+    }
+
     Ok(())
 }
 

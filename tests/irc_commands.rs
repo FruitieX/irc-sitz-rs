@@ -297,45 +297,6 @@ async fn test_tts_priority_control() {
         .any(|e| matches!(e, Event::TextToSpeech(TextToSpeechAction::DisallowLowPrio))));
 }
 
-/// Test MixerAction variants.
-#[tokio::test]
-async fn test_mixer_actions() {
-    use irc_sitz_rs::mixer::MixerAction;
-
-    let harness = TestHarness::new();
-    let mut subscriber = harness.bus().subscribe();
-
-    harness
-        .bus()
-        .send(Event::Mixer(MixerAction::DuckSecondaryChannels));
-    harness
-        .bus()
-        .send(Event::Mixer(MixerAction::UnduckSecondaryChannels));
-    harness
-        .bus()
-        .send(Event::Mixer(MixerAction::SetSecondaryChannelVolume(0.5)));
-    harness
-        .bus()
-        .send(Event::Mixer(MixerAction::SetSecondaryChannelDuckedVolume(
-            0.3,
-        )));
-
-    let events = collect_events(&mut subscriber, std::time::Duration::from_millis(100)).await;
-
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, Event::Mixer(MixerAction::DuckSecondaryChannels))));
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, Event::Mixer(MixerAction::UnduckSecondaryChannels))));
-    assert!(events.iter().any(
-        |e| matches!(e, Event::Mixer(MixerAction::SetSecondaryChannelVolume(v)) if (*v - 0.5).abs() < 0.001)
-    ));
-    assert!(events.iter().any(
-        |e| matches!(e, Event::Mixer(MixerAction::SetSecondaryChannelDuckedVolume(v)) if (*v - 0.3).abs() < 0.001)
-    ));
-}
-
 /// Test SongleaderAction::RequestSong with a direct SongbookSong.
 #[tokio::test]
 async fn test_request_song_direct() {

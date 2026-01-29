@@ -1,12 +1,19 @@
+//! Text-to-speech audio source using espeak-ng.
+//!
+//! Receives speech requests via events, generates audio at 22050Hz,
+//! resamples to 48kHz, and provides samples to the mixer.
+
 #![allow(non_upper_case_globals)]
+
 use crate::{
     buffer::PlaybackBuffer,
+    constants::ESPEAK_SAMPLE_RATE,
     event::{Event, EventBus},
-    mixer::{MixerAction, MixerInput, Sample},
+    sources::{Sample, OUTPUT_SAMPLE_RATE},
 };
+use rubato::{FftFixedIn, Resampler};
 use serde::Deserialize;
-use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, Deserialize, Default, PartialEq)]
 pub enum Priority {
@@ -18,100 +25,152 @@ pub enum Priority {
 #[derive(Clone, Debug)]
 pub enum TextToSpeechAction {
     Speak { text: String, prio: Priority },
+    #[allow(dead_code)]
     AllowLowPrio,
+    #[allow(dead_code)]
     DisallowLowPrio,
 }
 
-pub fn init(bus: &EventBus) -> MixerInput {
-    let (tx, rx) = mpsc::channel(128);
-    let playback_buf = Arc::new(Mutex::new(PlaybackBuffer::default()));
+/// Shared buffer type for TTS audio
+pub type TtsBuffer = Arc<Mutex<PlaybackBuffer>>;
 
-    start_speak_event_loop(bus.clone(), playback_buf.clone());
-    start_emit_sample_loop(bus.clone(), tx, playback_buf);
-
-    rx
+/// Create a new TTS buffer
+pub fn create_buffer() -> TtsBuffer {
+    Arc::new(Mutex::new(PlaybackBuffer::new()))
 }
 
-fn start_speak_event_loop(bus: EventBus, playback_buf: Arc<Mutex<PlaybackBuffer>>) {
+/// Initialize the TTS system and return a shared buffer for audio output.
+pub fn init(bus: &EventBus) -> TtsBuffer {
+    let buffer = create_buffer();
+    start_speak_event_loop(bus.clone(), buffer.clone());
+    buffer
+}
+
+fn start_speak_event_loop(bus: EventBus, buffer: TtsBuffer) {
     tokio::spawn(async move {
-        // Check for any new events on the bus
-        let mut bus = bus.subscribe();
+        let mut subscriber = bus.subscribe();
+
+        // Create resampler: 22050Hz -> 48000Hz
+        let resampler = FftFixedIn::<f64>::new(
+            ESPEAK_SAMPLE_RATE as usize,
+            OUTPUT_SAMPLE_RATE as usize,
+            1024, // chunk size
+            2,    // sub-chunks
+            1,    // mono input (espeak generates mono)
+        );
+
+        let resampler = match resampler {
+            Ok(r) => Arc::new(Mutex::new(r)),
+            Err(e) => {
+                error!("Failed to create espeak resampler: {e}");
+                return;
+            }
+        };
 
         loop {
-            let event = bus.recv().await;
+            let event = subscriber.recv().await;
 
             if let Event::TextToSpeech(TextToSpeechAction::Speak { text, prio }) = event {
+                let is_high_prio = prio == Priority::High;
+
+                // Generate speech in blocking task
                 let spoken =
                     tokio::task::spawn_blocking(move || espeakng_sys_example::speak(&text)).await;
 
                 let spoken = match spoken {
                     Ok(spoken) => spoken,
                     Err(e) => {
-                        error!("Error while calling espeakng: {:?}", e);
+                        error!("Error while calling espeakng: {e:?}");
                         continue;
                     }
                 };
 
-                let mut playback_buf = playback_buf.lock().await;
-                if prio == Priority::High {
-                    playback_buf.clear();
+                // Process and resample audio
+                let resampled = resample_audio(&spoken.wav, &resampler);
+
+                // Add to buffer
+                if let Ok(mut buf) = buffer.lock() {
+                    if is_high_prio {
+                        buf.clear();
+                    }
+
+                    // Add silence padding before and after (in output sample rate)
+                    let silence_samples = (OUTPUT_SAMPLE_RATE as usize) / 10; // 100ms
+                    let silence: Vec<Sample> = vec![(0, 0); silence_samples];
+
+                    buf.push_samples(silence.clone());
+                    buf.push_samples(resampled);
+                    buf.push_samples(silence);
                 }
-
-                // Add some silence before the sample
-                let mut audio = vec![0; 5000];
-
-                audio.extend(spoken.wav);
-
-                // Add some silence after the sample
-                audio.extend(vec![0; 5000]);
-
-                let audio: Vec<Sample> = audio.into_iter().map(|sample| (sample, sample)).collect();
-
-                playback_buf.push_samples(audio);
             }
         }
     });
 }
 
-fn start_emit_sample_loop(
-    bus: EventBus,
-    tx: mpsc::Sender<Sample>,
-    playback_buf: Arc<Mutex<PlaybackBuffer>>,
-) {
-    tokio::spawn(async move {
-        let mut speaking = false;
+/// Resample mono i16 audio from 22050Hz to 48000Hz stereo.
+fn resample_audio(input: &[i16], resampler: &Arc<Mutex<FftFixedIn<f64>>>) -> Vec<Sample> {
+    if input.is_empty() {
+        return vec![];
+    }
 
-        loop {
-            let was_speaking = speaking;
+    let mut resampler = match resampler.lock() {
+        Ok(r) => r,
+        Err(_) => return vec![],
+    };
 
-            let sample = {
-                let mut playback_buf = playback_buf.lock().await;
-                let sample = playback_buf.next_sample();
+    // Convert i16 to f64 normalized
+    let input_f64: Vec<f64> = input.iter().map(|&s| s as f64 / 32768.0).collect();
 
-                speaking = sample.is_some();
+    // Wrap in channel vec (mono)
+    let input_channels = vec![input_f64];
 
-                sample.unwrap_or_default()
-            };
+    // Process in chunks
+    let chunk_size = resampler.input_frames_max();
+    let mut output = Vec::new();
 
-            if speaking != was_speaking {
-                if speaking {
-                    bus.send(Event::Mixer(MixerAction::DuckSecondaryChannels))
-                } else {
-                    bus.send(Event::Mixer(MixerAction::UnduckSecondaryChannels))
+    for chunk_start in (0..input_channels[0].len()).step_by(chunk_size) {
+        let chunk_end = (chunk_start + chunk_size).min(input_channels[0].len());
+        let chunk: Vec<Vec<f64>> = input_channels
+            .iter()
+            .map(|ch| ch[chunk_start..chunk_end].to_vec())
+            .collect();
+
+        // Pad last chunk if needed
+        let chunk: Vec<Vec<f64>> = if chunk[0].len() < chunk_size {
+            chunk
+                .into_iter()
+                .map(|mut ch| {
+                    ch.resize(chunk_size, 0.0);
+                    ch
+                })
+                .collect()
+        } else {
+            chunk
+        };
+
+        match resampler.process(&chunk, None) {
+            Ok(resampled) => {
+                if !resampled.is_empty() && !resampled[0].is_empty() {
+                    // Convert f64 back to i16 stereo samples
+                    for &sample in &resampled[0] {
+                        let s = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                        output.push((s, s)); // Mono to stereo
+                    }
                 }
             }
-
-            // Send the same sample twice to resample from 22050 Hz to to 44100 Hz
-            for _ in 0..2 {
-                tx.send(sample)
-                    .await
-                    .expect("Expected mixer channel to never close");
+            Err(e) => {
+                warn!("Resampling error: {e}");
             }
         }
-    });
+    }
+
+    // Reset resampler for next use
+    resampler.reset();
+
+    output
 }
 
-// https://github.com/Better-Player/espeakng-sys/tree/9aeadd42772da076c1a1d5fbcd6384b8c9d56bba#example
+// espeakng-sys example code (unchanged from original)
 mod espeakng_sys_example {
     use espeakng_sys::*;
     use lazy_static::lazy_static;
@@ -120,43 +179,31 @@ mod espeakng_sys_example {
     use std::os::raw::{c_char, c_int, c_short};
     use std::sync::{Mutex, MutexGuard};
 
-    /// The name of the voice to use
     const VOICE_NAME: &str = "Finnish";
-    /// The length in mS of sound buffers passed to the SynthCallback function.
     const BUFF_LEN: i32 = 500;
-    /// Options to set for espeak-ng
     const OPTIONS: i32 = 0;
 
     lazy_static! {
-        /// The complete audio provided by the callback
         static ref AUDIO_RETURN: Mutex<Cell<Vec<i16>>> = Mutex::new(Cell::new(Vec::default()));
-
-        /// Audio buffer for use in the callback
         static ref AUDIO_BUFFER: Mutex<Cell<Vec<i16>>> = Mutex::new(Cell::new(Vec::default()));
     }
 
-    /// Spoken speech
     pub struct Spoken {
-        /// The audio data
         pub wav: Vec<i16>,
-        /// The sample rate of the audio
         #[allow(dead_code)]
         pub sample_rate: i32,
     }
 
-    /// Perform Text-To-Speech
     pub fn speak(text: &str) -> Spoken {
         let output: espeak_AUDIO_OUTPUT = espeak_AUDIO_OUTPUT_AUDIO_OUTPUT_RETRIEVAL;
 
         AUDIO_RETURN.plock().set(Vec::default());
         AUDIO_BUFFER.plock().set(Vec::default());
 
-        // The directory which contains the espeak-ng-data directory, or NULL for the default location.
         let path: *const c_char = std::ptr::null();
         let voice_name_cstr = CString::new(VOICE_NAME).expect("Failed to convert &str to CString");
         let voice_name = voice_name_cstr.as_ptr();
 
-        // Returns: sample rate in Hz, or -1 (EE_INTERNAL_ERROR).
         let sample_rate = unsafe { espeak_Initialize(output, BUFF_LEN, path, OPTIONS) };
 
         unsafe {
@@ -186,7 +233,6 @@ mod espeakng_sys_example {
             );
         }
 
-        // Wait for the speaking to complete
         match unsafe { espeak_Synchronize() } {
             espeak_ERROR_EE_OK => {}
             espeak_ERROR_EE_INTERNAL_ERROR => {
@@ -207,26 +253,11 @@ mod espeakng_sys_example {
         }
     }
 
-    /// int SynthCallback(short *wav, int numsamples, espeak_EVENT *events);
-    ///
-    /// wav:  is the speech sound data which has been produced.
-    /// NULL indicates that the synthesis has been completed.
-    ///
-    /// numsamples: is the number of entries in wav.  This number may vary, may be less than
-    /// the value implied by the buflength parameter given in espeak_Initialize, and may
-    /// sometimes be zero (which does NOT indicate end of synthesis).
-    ///
-    /// events: an array of espeak_EVENT items which indicate word and sentence events, and
-    /// also the occurance if <mark> and <audio> elements within the text.  The list of
-    /// events is terminated by an event of type = 0.
-    ///
-    /// Callback returns: 0=continue synthesis,  1=abort synthesis.
     unsafe extern "C" fn synth_callback(
         wav: *mut c_short,
         sample_count: c_int,
         events: *mut espeak_EVENT,
     ) -> c_int {
-        // Calculate the length of the events array
         let mut events_copy = events;
         let mut elem_count = 0;
         while (*events_copy).type_ != espeak_EVENT_TYPE_espeakEVENT_LIST_TERMINATED {
@@ -234,8 +265,6 @@ mod espeakng_sys_example {
             events_copy = events_copy.add(1);
         }
 
-        // Turn the event array into a Vec.
-        // We must clone from the slice, as the provided array's memory is managed by C
         let event_slice = std::slice::from_raw_parts_mut(events, elem_count);
         let event_vec = event_slice
             .iter_mut()
@@ -245,13 +274,10 @@ mod espeakng_sys_example {
         let mut wav_vec = if sample_count == 0 {
             vec![]
         } else {
-            // Turn the audio wav data array into a Vec.
-            // We must clone from the slice, as the provided array's memory is managed by C
             let wav_slice = std::slice::from_raw_parts_mut(wav, sample_count as usize);
             wav_slice.iter_mut().map(|f| *f).collect::<Vec<i16>>()
         };
 
-        // Determine if this is the end of the synth
         let mut is_end = false;
         for event in event_vec {
             if event
@@ -262,8 +288,6 @@ mod espeakng_sys_example {
             }
         }
 
-        // If this is the end, we want to set the AUDIO_RETURN
-        // Else we want to append to the AUDIO_BUFFER
         if is_end {
             AUDIO_RETURN.plock().set(AUDIO_BUFFER.plock().take());
         } else {

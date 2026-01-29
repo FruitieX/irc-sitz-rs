@@ -13,7 +13,6 @@ pub use irc_sitz_rs::config::IrcConfig;
 pub use irc_sitz_rs::config::{Config, SongbookConfig};
 pub use irc_sitz_rs::event::{Event, EventBus, Subscriber};
 pub use irc_sitz_rs::message::{MessageAction, Platform, RichContent};
-pub use irc_sitz_rs::mixer::MixerAction;
 pub use irc_sitz_rs::playback::{PlaybackAction, Song};
 pub use irc_sitz_rs::songbook::SongbookSong;
 pub use irc_sitz_rs::songleader::{Mode, SongleaderAction, SongleaderState};

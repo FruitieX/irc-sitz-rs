@@ -24,7 +24,9 @@ in
       #llvmPackages.libclang
       #clang
       espeak-ng
+      cmake
+      libopus
     ];
     LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
-    LD_LIBRARY_PATH = "${espeak-ng}/lib";
+    LD_LIBRARY_PATH = "${espeak-ng}/lib:${libopus}/lib";
   }

@@ -11,3 +11,4 @@ songbook_re = "https://(songbook|xn--sngbok-iua|sangbok|sångbok).example.com/(.
 # discord_token = "your-bot-token-here"
 # discord_channel_id = 123456789012345678
 # discord_guild_id = 123456789012345678
+# discord_voice_channel_id = 123456789012345678  # Voice channel for audio streaming (optional)

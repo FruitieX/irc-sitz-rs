@@ -181,13 +181,13 @@ impl Playback {
     }
 
     fn queue_duration_mins(&self) -> u64 {
-        self.state
+        let total_secs: u64 = self
+            .state
             .queued_songs
             .iter()
             .map(|song| song.duration)
-            .sum::<u64>()
-            / 60
-            - self.state.playback_progress / 60
+            .sum();
+        total_secs.saturating_sub(self.state.playback_progress) / 60
     }
 
     fn enqueue(&mut self, song: Song) {

@@ -28,8 +28,15 @@ pub async fn get_yt_media_source_stream(url: String) -> Result<MediaSourceStream
         // .arg("--extractor-args")
         // .arg("youtube:player_client=tv")
         // until symphonia has opus support
+
+        // 2026 yt-dlp fix:
+        // https://github.com/yt-dlp/yt-dlp/issues/15712
+        .arg("--extractor-args")
+        .arg("youtube:player_client=default,ios,-android_sdkless;formats=missing_pot")
         .arg("--format")
-        .arg("bestaudio[ext=m4a]")
+        .arg("ba[protocol=m3u8_native]/b[protocol=m3u8_native]")
+        // .arg("bestaudio[ext=m4a]")
+
         .arg("-o")
         .arg("-")
         .stdout(std::process::Stdio::piped())
