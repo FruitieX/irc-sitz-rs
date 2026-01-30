@@ -142,8 +142,13 @@ async fn connect_and_run(
     let default_port = if use_tls { 6697 } else { 6667 };
     let port = irc_config.irc_port.unwrap_or(default_port);
 
+    // Generate alternative nicknames with numbers appended
+    let base_nick = &irc_config.irc_nickname;
+    let alt_nicks: Vec<String> = (1..=9).map(|i| format!("{base_nick}{i}")).collect();
+
     let irc_client_config = Config {
         nickname: Some(irc_config.irc_nickname.clone()),
+        alt_nicks,
         server: Some(irc_config.irc_server.clone()),
         port: Some(port),
         channels: vec![irc_config.irc_channel.clone()],

@@ -23,6 +23,9 @@ pub enum RichContent {
         queue_length: usize,
         queue_duration_mins: u64,
         is_playing: bool,
+        /// True when this is a "now playing" update (skip reaction added),
+        /// false for /queue command responses
+        is_now_playing_update: bool,
     },
 
     /// Song added to queue confirmation
@@ -51,6 +54,9 @@ pub enum RichContent {
 
     /// Song request added
     SongRequestAdded { song: SongbookSong },
+
+    /// Welcome message line (formatted as code in Discord)
+    WelcomeLine { text: String },
 }
 
 #[derive(Clone, Debug)]

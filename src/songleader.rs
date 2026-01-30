@@ -1,5 +1,5 @@
 use crate::{
-    config::Config,
+    config::{Config, SharedRuntimeParams},
     event::{Event, EventBus},
     message::{CountdownValue, MessageAction, RichContent},
     playback::PlaybackAction,
@@ -21,14 +21,18 @@ use tokio::{
 
 const SONGLEADER_STATE_FILE: &str = "songleader_state.json";
 const SONGLEADER_STATE_FILE_TMP: &str = "songleader_state.json.tmp";
+/// Default number of votes required to advance from tempo to bingo
 pub const NUM_TEMPO_NICKS: usize = 3;
+/// Default number of votes required to start singing
 pub const NUM_BINGO_NICKS: usize = 3;
 const ANTI_FLOOD_DELAY: Duration = Duration::from_millis(1200);
 const SECOND: Duration = Duration::from_secs(1);
-const TEMPO_DEADLINE_REDUCTION: Duration = Duration::from_secs(60);
-const TEMPO_DEADLINE: Duration = Duration::from_secs(420);
-const HELP_TEXT: &str = r#"
-===================================================================
+/// How much the tempo deadline is reduced per vote
+pub const TEMPO_DEADLINE_REDUCTION: Duration = Duration::from_secs(60);
+/// Initial tempo deadline
+pub const TEMPO_DEADLINE: Duration = Duration::from_secs(420);
+
+const HELP_TEXT_IRC: &str = r#"===================================================================
 Useful commands:
 Add a YouTube URL to the music queue:     !p https://youtu.be/dQw4w9WgXcQ
 Remove most recently queued music by you: !rm
@@ -37,6 +41,17 @@ List current requests:                    !ls
 To say stuff, use:                        !speak hello world
 For help during the evening:              !help
 And the most important - to sing a song:  !tempo
+==================================================================="#;
+
+const HELP_TEXT_DISCORD: &str = r#"===================================================================
+Useful commands:
+Add a YouTube URL to the music queue:     /play https://youtu.be/dQw4w9WgXcQ
+Remove most recently queued music by you: /remove
+Request a song you want to sing:          /request songbook-url
+List current requests:                    /songs
+To say stuff, use:                        /speak hello world
+For help during the evening:              /help
+And the most important - to sing a song:  /tempo
 ==================================================================="#;
 
 #[derive(Clone, Debug)]
@@ -261,11 +276,14 @@ pub struct Songleader {
     bus: EventBus,
 
     config: Config,
+
+    /// Runtime parameters (shared with other components)
+    pub params: SharedRuntimeParams,
 }
 
 impl Songleader {
     /// Creates a new [Songleader] struct
-    pub async fn create(bus: &EventBus, config: &Config) -> Self {
+    pub async fn create(bus: &EventBus, config: &Config, params: SharedRuntimeParams) -> Self {
         let state = SongleaderState::read_or_default().await;
 
         debug!("Initial songleader state:\n{:#?}", state);
@@ -274,15 +292,22 @@ impl Songleader {
             state,
             bus: bus.clone(),
             config: config.clone(),
+            params,
         }
     }
 
     /// Creates a new [Songleader] with a specific initial state (for testing)
-    pub fn create_with_state(bus: &EventBus, config: &Config, state: SongleaderState) -> Self {
+    pub fn create_with_state(
+        bus: &EventBus,
+        config: &Config,
+        state: SongleaderState,
+        params: SharedRuntimeParams,
+    ) -> Self {
         Self {
             state,
             bus: bus.clone(),
             config: config.clone(),
+            params,
         }
     }
 
@@ -391,7 +416,12 @@ impl Songleader {
         self.tts_say("Diii duuuu diii duuuu diii duuu");
         sleep(3 * SECOND).await;
 
-        let welcome_text = format!(
+        let songbook_example_url = format!(
+            "{}/tf-sangbok-150-teknologvisan",
+            self.config.songbook.songbook_url
+        );
+
+        let welcome_text_irc = format!(
             r#"{} {}
 ===================================================================
 Hi and welcome to this party. I will be your host today.
@@ -400,17 +430,38 @@ Have fun, and don't drown in the shower!
 ==================================================================="#,
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION"),
-            HELP_TEXT.replace(
-                "songbook-url",
-                &format!(
-                    "{}/tf-sangbok-150-teknologvisan",
-                    self.config.songbook.songbook_url
-                )
-            )
+            HELP_TEXT_IRC.replace("songbook-url", &songbook_example_url)
         );
 
-        for line in welcome_text.split('\n') {
-            self.say(line);
+        let welcome_text_discord = format!(
+            r#"{} {}
+===================================================================
+Hi and welcome to this party. I will be your host today.
+{}
+Have fun, and don't drown in the shower!
+==================================================================="#,
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION"),
+            HELP_TEXT_DISCORD.replace("songbook-url", &songbook_example_url)
+        );
+
+        // Send welcome messages line by line
+        // IRC gets plain text, Discord gets code-formatted text
+        for (irc_line, discord_line) in welcome_text_irc
+            .split('\n')
+            .zip(welcome_text_discord.split('\n'))
+        {
+            let discord_content = if discord_line.is_empty() {
+                " ".to_string()
+            } else {
+                discord_line.to_string()
+            };
+            self.say_rich(
+                irc_line,
+                RichContent::WelcomeLine {
+                    text: discord_content,
+                },
+            );
             sleep(ANTI_FLOOD_DELAY).await;
         }
 
@@ -543,10 +594,16 @@ Have fun, and don't drown in the shower!
 /// Type alias for shared songleader state
 pub type SharedSongleader = Arc<RwLock<Songleader>>;
 
-pub async fn init(bus: &EventBus, config: &Config) -> SharedSongleader {
-    let songleader = Arc::new(RwLock::new(Songleader::create(bus, config).await));
+pub async fn init(
+    bus: &EventBus,
+    config: &Config,
+    params: SharedRuntimeParams,
+) -> SharedSongleader {
+    let songleader = Arc::new(RwLock::new(
+        Songleader::create(bus, config, params.clone()).await,
+    ));
 
-    handle_incoming_event_loop(bus.clone(), config.clone(), songleader.clone());
+    handle_incoming_event_loop(bus.clone(), config.clone(), params, songleader.clone());
     check_tempo_timeout_loop(songleader.clone());
 
     songleader
@@ -577,7 +634,12 @@ fn check_tempo_timeout_loop(songleader: Arc<RwLock<Songleader>>) {
 }
 
 /// Loop over incoming events on the bus
-fn handle_incoming_event_loop(bus: EventBus, config: Config, songleader: Arc<RwLock<Songleader>>) {
+fn handle_incoming_event_loop(
+    bus: EventBus,
+    config: Config,
+    _params: SharedRuntimeParams,
+    songleader: Arc<RwLock<Songleader>>,
+) {
     tokio::spawn(async move {
         let mut bus_rx = bus.subscribe();
 
@@ -693,15 +755,16 @@ pub async fn handle_incoming_event(
         }
 
         SongleaderAction::Tempo { nick } => {
+            let num_tempo_nicks = songleader.params.read().await.num_tempo_nicks;
             if let Mode::Tempo { nicks, init_t } = &mut songleader.state.mode {
                 let is_new = nicks.insert(nick.clone());
-                let remaining = NUM_TEMPO_NICKS.saturating_sub(nicks.len());
+                let remaining = num_tempo_nicks.saturating_sub(nicks.len());
 
                 if is_new {
                     info!(
                         "Got tempo by {nick}, have {count}/{required} (waiting for {remaining} more)",
                         count = nicks.len(),
-                        required = NUM_TEMPO_NICKS
+                        required = num_tempo_nicks
                     );
                 } else {
                     info!("Duplicate tempo by {nick}, ignoring");
@@ -716,7 +779,7 @@ pub async fn handle_incoming_event(
                     count = nicks.len()
                 );
 
-                if nicks.len() >= NUM_TEMPO_NICKS {
+                if nicks.len() >= num_tempo_nicks {
                     info!("Tempo threshold reached, transitioning to bingo mode");
                     songleader.enter_bingo_mode();
                 } else {
@@ -731,21 +794,22 @@ pub async fn handle_incoming_event(
         }
 
         SongleaderAction::Bingo { nick } => {
+            let num_bingo_nicks = songleader.params.read().await.num_bingo_nicks;
             if let Mode::Bingo { nicks, song } = &mut songleader.state.mode {
                 let is_new = nicks.insert(nick.clone());
-                let remaining = NUM_BINGO_NICKS.saturating_sub(nicks.len());
+                let remaining = num_bingo_nicks.saturating_sub(nicks.len());
 
                 if is_new {
                     info!(
                         "Got bingo by {nick}, have {count}/{required} (waiting for {remaining} more) for song: {song}",
                         count = nicks.len(),
-                        required = NUM_BINGO_NICKS
+                        required = num_bingo_nicks
                     );
                 } else {
                     info!("Duplicate bingo by {nick}, ignoring");
                 }
 
-                if nicks.len() >= NUM_BINGO_NICKS {
+                if nicks.len() >= num_bingo_nicks {
                     info!("Bingo threshold reached, transitioning to singing mode");
                     songleader.enter_singing_mode().await;
                 } else {
@@ -816,7 +880,7 @@ pub async fn handle_incoming_event(
 
             let songbook_url = config.songbook.songbook_url.clone();
             songleader.say_rich(
-                &HELP_TEXT.replace(
+                &HELP_TEXT_IRC.replace(
                     "songbook-url",
                     &format!("{songbook_url}/tf-sangbok-150-teknologvisan"),
                 ),

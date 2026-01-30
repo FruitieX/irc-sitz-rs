@@ -21,6 +21,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config = config::load().await?;
     let bus = event::EventBus::new();
+    let params = config::create_runtime_params().await;
 
     // Initialize audio sources - they write to shared buffers
     let tts_buffer = sources::espeak::init(&bus);
@@ -34,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
         irc::init(&bus, &config, irc_config).await?;
     }
 
-    let songleader = songleader::init(&bus, &config).await;
+    let songleader = songleader::init(&bus, &config, params.clone()).await;
     event::debug(&bus);
 
     #[cfg(feature = "discord")]
@@ -45,12 +46,21 @@ async fn main() -> anyhow::Result<()> {
             music_buffer.clone(),
         )));
 
-        discord::init(&bus, &config, discord_config, mixer, playback.clone(), songleader.clone()).await?;
+        discord::init(
+            &bus,
+            &config,
+            discord_config,
+            mixer,
+            playback.clone(),
+            songleader.clone(),
+            params.clone(),
+        )
+        .await?;
     }
 
     // Suppress unused variable warnings when discord feature is disabled
     #[cfg(not(feature = "discord"))]
-    let _ = (playback, songleader);
+    let _ = (playback, songleader, params);
 
     tokio::signal::ctrl_c().await?;
 

@@ -376,7 +376,7 @@ impl Playback {
         }
     }
 
-    fn list_queue(&self, offset: Option<usize>) {
+    fn list_queue(&self, offset: Option<usize>, is_now_playing_update: bool) {
         let fmt_song = |song: Option<&Song>| {
             song.map(|song| {
                 format!(
@@ -428,6 +428,7 @@ impl Playback {
                 queue_length: len,
                 queue_duration_mins: duration_min,
                 is_playing: self.state.is_playing,
+                is_now_playing_update,
             },
         );
     }
@@ -495,7 +496,7 @@ impl Playback {
             url: song.url,
         }));
 
-        self.list_queue(None);
+        self.list_queue(None, true);
         self.state.persist();
     }
 
@@ -616,7 +617,7 @@ async fn handle_incoming_event(action: PlaybackAction, playback: Arc<RwLock<Play
     match action {
         PlaybackAction::Enqueue { song } => playback.enqueue(song),
         PlaybackAction::ListQueue { offset } => {
-            playback.list_queue(offset);
+            playback.list_queue(offset, false);
         }
         PlaybackAction::RmSongByPos { pos } => playback.rm_song_at_pos(pos),
         PlaybackAction::RmSongByNick { nick } => playback.rm_latest_song_by_nick(nick),

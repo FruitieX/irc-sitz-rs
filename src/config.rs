@@ -1,7 +1,85 @@
 use anyhow::Result;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tokio::fs::read_to_string;
+use tokio::sync::RwLock;
+
+const PARAMS_STATE_FILE: &str = "params_state.json";
+const PARAMS_STATE_FILE_TMP: &str = "params_state.json.tmp";
+
+/// Runtime-adjustable parameters (can be modified via admin commands)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeParams {
+    /// Normal volume for music during playback (0.0 - 1.0)
+    pub music_volume: f64,
+    /// Ducked volume for music when TTS is playing (0.0 - 1.0)
+    pub music_volume_ducked: f64,
+    /// Volume multiplier for TTS (speech)
+    pub tts_volume: f64,
+    /// Number of votes required to skip a song
+    pub skip_votes_required: usize,
+    /// Number of tempo votes to advance to bingo
+    pub num_tempo_nicks: usize,
+    /// Number of bingo votes to start singing
+    pub num_bingo_nicks: usize,
+}
+
+impl Default for RuntimeParams {
+    fn default() -> Self {
+        Self {
+            music_volume: 0.75,
+            music_volume_ducked: 0.2,
+            tts_volume: 1.25,
+            skip_votes_required: 3,
+            num_tempo_nicks: 3,
+            num_bingo_nicks: 3,
+        }
+    }
+}
+
+impl RuntimeParams {
+    async fn read_or_default() -> Self {
+        match tokio::fs::read(PARAMS_STATE_FILE).await {
+            Ok(data) => serde_json::from_slice(&data).unwrap_or_default(),
+            Err(e) => {
+                info!("Error while reading params state: {:?}", e);
+                info!("Falling back to default params.");
+                RuntimeParams::default()
+            }
+        }
+    }
+
+    /// Persists params to disk using atomic write (write to temp file, then rename).
+    pub fn persist(&self) {
+        let json = match serde_json::to_string_pretty(self) {
+            Ok(json) => json,
+            Err(e) => {
+                error!("Error while serializing params state: {:?}", e);
+                return;
+            }
+        };
+
+        tokio::spawn(async move {
+            if let Err(e) = tokio::fs::write(PARAMS_STATE_FILE_TMP, &json).await {
+                error!("Error while writing params state to temp file: {:?}", e);
+                return;
+            }
+
+            if let Err(e) = tokio::fs::rename(PARAMS_STATE_FILE_TMP, PARAMS_STATE_FILE).await {
+                error!("Error while renaming params state file: {:?}", e);
+            }
+        });
+    }
+}
+
+/// Shared runtime parameters accessible from multiple components
+pub type SharedRuntimeParams = Arc<RwLock<RuntimeParams>>;
+
+/// Create a new shared runtime parameters instance, loading from file if available
+pub async fn create_runtime_params() -> SharedRuntimeParams {
+    Arc::new(RwLock::new(RuntimeParams::read_or_default().await))
+}
 
 #[cfg(feature = "irc")]
 #[derive(Clone, Deserialize, Serialize)]
