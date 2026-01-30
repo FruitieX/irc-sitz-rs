@@ -10,7 +10,7 @@ use tokio::sync::broadcast::error::TryRecvError;
 // Re-export key types from the main crate
 #[cfg(feature = "irc")]
 pub use irc_sitz_rs::config::IrcConfig;
-pub use irc_sitz_rs::config::{Config, SongbookConfig};
+pub use irc_sitz_rs::config::{Config, RuntimeParams, SharedRuntimeParams, SongbookConfig};
 pub use irc_sitz_rs::event::{Event, EventBus, Subscriber};
 pub use irc_sitz_rs::message::{MessageAction, Platform, RichContent};
 pub use irc_sitz_rs::playback::{PlaybackAction, Song};
@@ -37,6 +37,11 @@ pub fn test_config() -> Config {
         #[cfg(feature = "discord")]
         discord: None,
     }
+}
+
+/// Creates default runtime parameters for testing.
+pub fn test_runtime_params() -> SharedRuntimeParams {
+    std::sync::Arc::new(tokio::sync::RwLock::new(RuntimeParams::default()))
 }
 
 /// Creates a mock Song for testing.

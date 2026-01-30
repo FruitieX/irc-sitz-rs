@@ -15,14 +15,21 @@ use tokio::time::Instant;
 /// Creates a test songleader with the given initial mode.
 fn create_test_songleader(bus: &EventBus, mode: Mode) -> Arc<RwLock<Songleader>> {
     let config = test_config();
+    let params = test_runtime_params();
     let mut state = SongleaderState::default();
     state.mode = mode;
 
     // Add some songs so bingo mode can work
-    state.requests.push(mock_songbook_song("test-song-1", "Test Song 1", Some("user")));
-    state.backup.push(mock_songbook_song("backup-song-1", "Backup Song", None));
+    state.requests.push(mock_songbook_song(
+        "test-song-1",
+        "Test Song 1",
+        Some("user"),
+    ));
+    state
+        .backup
+        .push(mock_songbook_song("backup-song-1", "Backup Song", None));
 
-    let songleader = Songleader::create_with_state(bus, &config, state);
+    let songleader = Songleader::create_with_state(bus, &config, state, params);
     Arc::new(RwLock::new(songleader))
 }
 
@@ -45,18 +52,48 @@ async fn send_action(
 async fn test_tempo_to_bingo_transition() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
     // Send 3 tempo commands from different users
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "user1".to_string() }).await;
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "user2".to_string() }).await;
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "user3".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "user1".to_string(),
+        },
+    )
+    .await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "user2".to_string(),
+        },
+    )
+    .await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "user3".to_string(),
+        },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Bingo { .. }), "Expected Bingo mode after 3 tempo commands");
+    assert!(
+        matches!(state.mode, Mode::Bingo { .. }),
+        "Expected Bingo mode after 3 tempo commands"
+    );
 }
 
 /// Test: !bingo in Bingo mode with enough users triggers transition to Singing.
@@ -65,18 +102,48 @@ async fn test_bingo_to_singing_transition() {
     let bus = EventBus::new();
     let config = test_config();
     let song = mock_songbook_song("current-song", "Current Song", None);
-    let songleader = create_test_songleader(&bus, Mode::Bingo {
-        nicks: HashSet::new(),
-        song,
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Bingo {
+            nicks: HashSet::new(),
+            song,
+        },
+    );
 
     // Send 3 bingo commands from different users
-    send_action(&bus, &config, &songleader, SongleaderAction::Bingo { nick: "user1".to_string() }).await;
-    send_action(&bus, &config, &songleader, SongleaderAction::Bingo { nick: "user2".to_string() }).await;
-    send_action(&bus, &config, &songleader, SongleaderAction::Bingo { nick: "user3".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Bingo {
+            nick: "user1".to_string(),
+        },
+    )
+    .await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Bingo {
+            nick: "user2".to_string(),
+        },
+    )
+    .await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Bingo {
+            nick: "user3".to_string(),
+        },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Singing), "Expected Singing mode after 3 bingo commands");
+    assert!(
+        matches!(state.mode, Mode::Singing),
+        "Expected Singing mode after 3 bingo commands"
+    );
 }
 
 /// Test: !skål in Singing mode triggers transition to Tempo.
@@ -89,7 +156,10 @@ async fn test_singing_to_tempo_transition() {
     send_action(&bus, &config, &songleader, SongleaderAction::Skål).await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Tempo { .. }), "Expected Tempo mode after skål");
+    assert!(
+        matches!(state.mode, Mode::Tempo { .. }),
+        "Expected Tempo mode after skål"
+    );
 }
 
 /// Test: Force commands work correctly.
@@ -102,7 +172,10 @@ async fn test_force_tempo_command() {
     send_action(&bus, &config, &songleader, SongleaderAction::ForceTempo).await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Tempo { .. }), "ForceTempo should enter Tempo mode");
+    assert!(
+        matches!(state.mode, Mode::Tempo { .. }),
+        "ForceTempo should enter Tempo mode"
+    );
 }
 
 /// Test: Force bingo from any mode.
@@ -132,7 +205,10 @@ async fn test_force_singing_command() {
     send_action(&bus, &config, &songleader, SongleaderAction::ForceSinging).await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Singing), "ForceSinging should enter Singing mode");
+    assert!(
+        matches!(state.mode, Mode::Singing),
+        "ForceSinging should enter Singing mode"
+    );
 }
 
 /// Test: End command from active mode goes to Inactive.
@@ -145,7 +221,10 @@ async fn test_end_command() {
     send_action(&bus, &config, &songleader, SongleaderAction::End).await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Inactive), "End should enter Inactive mode");
+    assert!(
+        matches!(state.mode, Mode::Inactive),
+        "End should enter Inactive mode"
+    );
 }
 
 /// Test: Pause command enters Inactive mode.
@@ -153,15 +232,21 @@ async fn test_end_command() {
 async fn test_pause_command() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
     send_action(&bus, &config, &songleader, SongleaderAction::Pause).await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Inactive), "Pause should enter Inactive mode");
+    assert!(
+        matches!(state.mode, Mode::Inactive),
+        "Pause should enter Inactive mode"
+    );
 }
 
 // =============================================================================
@@ -174,18 +259,48 @@ async fn test_tempo_ignored_during_bingo() {
     let bus = EventBus::new();
     let config = test_config();
     let song = mock_songbook_song("current-song", "Current Song", None);
-    let songleader = create_test_songleader(&bus, Mode::Bingo {
-        nicks: HashSet::new(),
-        song,
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Bingo {
+            nicks: HashSet::new(),
+            song,
+        },
+    );
 
     // Spam tempo - should all be ignored
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "attacker".to_string() }).await;
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "attacker2".to_string() }).await;
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "attacker3".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "attacker".to_string(),
+        },
+    )
+    .await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "attacker2".to_string(),
+        },
+    )
+    .await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "attacker3".to_string(),
+        },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Bingo { .. }), "Tempo should be ignored in Bingo mode");
+    assert!(
+        matches!(state.mode, Mode::Bingo { .. }),
+        "Tempo should be ignored in Bingo mode"
+    );
 }
 
 /// Test: !tempo is ignored during Singing mode.
@@ -195,10 +310,21 @@ async fn test_tempo_ignored_during_singing() {
     let config = test_config();
     let songleader = create_test_songleader(&bus, Mode::Singing);
 
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "attacker".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "attacker".to_string(),
+        },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Singing), "Tempo should be ignored in Singing mode");
+    assert!(
+        matches!(state.mode, Mode::Singing),
+        "Tempo should be ignored in Singing mode"
+    );
 }
 
 /// Test: !tempo is ignored during Inactive mode.
@@ -208,10 +334,21 @@ async fn test_tempo_ignored_during_inactive() {
     let config = test_config();
     let songleader = create_test_songleader(&bus, Mode::Inactive);
 
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "attacker".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "attacker".to_string(),
+        },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Inactive), "Tempo should be ignored in Inactive mode");
+    assert!(
+        matches!(state.mode, Mode::Inactive),
+        "Tempo should be ignored in Inactive mode"
+    );
 }
 
 /// Test: !bingo is ignored during Tempo mode.
@@ -219,15 +356,29 @@ async fn test_tempo_ignored_during_inactive() {
 async fn test_bingo_ignored_during_tempo() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
-    send_action(&bus, &config, &songleader, SongleaderAction::Bingo { nick: "attacker".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Bingo {
+            nick: "attacker".to_string(),
+        },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Tempo { .. }), "Bingo should be ignored in Tempo mode");
+    assert!(
+        matches!(state.mode, Mode::Tempo { .. }),
+        "Bingo should be ignored in Tempo mode"
+    );
 }
 
 /// Test: !bingo is ignored during Singing mode.
@@ -237,10 +388,21 @@ async fn test_bingo_ignored_during_singing() {
     let config = test_config();
     let songleader = create_test_songleader(&bus, Mode::Singing);
 
-    send_action(&bus, &config, &songleader, SongleaderAction::Bingo { nick: "attacker".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Bingo {
+            nick: "attacker".to_string(),
+        },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Singing), "Bingo should be ignored in Singing mode");
+    assert!(
+        matches!(state.mode, Mode::Singing),
+        "Bingo should be ignored in Singing mode"
+    );
 }
 
 /// Test: !bingo is ignored during Inactive mode.
@@ -250,10 +412,21 @@ async fn test_bingo_ignored_during_inactive() {
     let config = test_config();
     let songleader = create_test_songleader(&bus, Mode::Inactive);
 
-    send_action(&bus, &config, &songleader, SongleaderAction::Bingo { nick: "attacker".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Bingo {
+            nick: "attacker".to_string(),
+        },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Inactive), "Bingo should be ignored in Inactive mode");
+    assert!(
+        matches!(state.mode, Mode::Inactive),
+        "Bingo should be ignored in Inactive mode"
+    );
 }
 
 /// Test: !skål is ignored during Tempo mode.
@@ -261,15 +434,21 @@ async fn test_bingo_ignored_during_inactive() {
 async fn test_skal_ignored_during_tempo() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
     send_action(&bus, &config, &songleader, SongleaderAction::Skål).await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Tempo { .. }), "Skål should be ignored in Tempo mode");
+    assert!(
+        matches!(state.mode, Mode::Tempo { .. }),
+        "Skål should be ignored in Tempo mode"
+    );
 }
 
 /// Test: !skål is ignored during Bingo mode.
@@ -278,15 +457,21 @@ async fn test_skal_ignored_during_bingo() {
     let bus = EventBus::new();
     let config = test_config();
     let song = mock_songbook_song("current-song", "Current Song", None);
-    let songleader = create_test_songleader(&bus, Mode::Bingo {
-        nicks: HashSet::new(),
-        song,
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Bingo {
+            nicks: HashSet::new(),
+            song,
+        },
+    );
 
     send_action(&bus, &config, &songleader, SongleaderAction::Skål).await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Bingo { .. }), "Skål should be ignored in Bingo mode");
+    assert!(
+        matches!(state.mode, Mode::Bingo { .. }),
+        "Skål should be ignored in Bingo mode"
+    );
 }
 
 /// Test: !skål is ignored during Inactive mode.
@@ -299,7 +484,10 @@ async fn test_skal_ignored_during_inactive() {
     send_action(&bus, &config, &songleader, SongleaderAction::Skål).await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Inactive), "Skål should be ignored in Inactive mode");
+    assert!(
+        matches!(state.mode, Mode::Inactive),
+        "Skål should be ignored in Inactive mode"
+    );
 }
 
 // =============================================================================
@@ -311,14 +499,25 @@ async fn test_skal_ignored_during_inactive() {
 async fn test_same_user_tempo_spam_counts_once() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
     // Same user spams tempo 10 times
     for _ in 0..10 {
-        send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "spammer".to_string() }).await;
+        send_action(
+            &bus,
+            &config,
+            &songleader,
+            SongleaderAction::Tempo {
+                nick: "spammer".to_string(),
+            },
+        )
+        .await;
     }
 
     let state = &songleader.read().await.state;
@@ -336,14 +535,25 @@ async fn test_same_user_bingo_spam_counts_once() {
     let bus = EventBus::new();
     let config = test_config();
     let song = mock_songbook_song("current-song", "Current Song", None);
-    let songleader = create_test_songleader(&bus, Mode::Bingo {
-        nicks: HashSet::new(),
-        song,
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Bingo {
+            nicks: HashSet::new(),
+            song,
+        },
+    );
 
     // Same user spams bingo 10 times
     for _ in 0..10 {
-        send_action(&bus, &config, &songleader, SongleaderAction::Bingo { nick: "spammer".to_string() }).await;
+        send_action(
+            &bus,
+            &config,
+            &songleader,
+            SongleaderAction::Bingo {
+                nick: "spammer".to_string(),
+            },
+        )
+        .await;
     }
 
     let state = &songleader.read().await.state;
@@ -368,7 +578,10 @@ async fn test_end_when_already_inactive() {
     send_action(&bus, &config, &songleader, SongleaderAction::End).await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Inactive), "Should remain Inactive");
+    assert!(
+        matches!(state.mode, Mode::Inactive),
+        "Should remain Inactive"
+    );
 }
 
 /// Test: Help is only available in Tempo or Inactive mode.
@@ -403,17 +616,31 @@ async fn test_help_only_in_tempo_or_inactive() {
 async fn test_very_long_nickname() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
     let long_nick = "a".repeat(10000);
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: long_nick.clone() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: long_nick.clone(),
+        },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
     if let Mode::Tempo { nicks, .. } = &state.mode {
-        assert!(nicks.contains(&long_nick), "Long nickname should be accepted");
+        assert!(
+            nicks.contains(&long_nick),
+            "Long nickname should be accepted"
+        );
     }
 }
 
@@ -422,17 +649,31 @@ async fn test_very_long_nickname() {
 async fn test_unicode_nickname() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
     let unicode_nick = "用户🎉تست";
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: unicode_nick.to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: unicode_nick.to_string(),
+        },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
     if let Mode::Tempo { nicks, .. } = &state.mode {
-        assert!(nicks.contains(unicode_nick), "Unicode nickname should be accepted");
+        assert!(
+            nicks.contains(unicode_nick),
+            "Unicode nickname should be accepted"
+        );
     }
 }
 
@@ -441,12 +682,23 @@ async fn test_unicode_nickname() {
 async fn test_empty_nickname() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "".to_string(),
+        },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
     if let Mode::Tempo { nicks, .. } = &state.mode {
@@ -460,16 +712,31 @@ async fn test_empty_nickname() {
 async fn test_whitespace_only_nickname() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "   ".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "   ".to_string(),
+        },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
     if let Mode::Tempo { nicks, .. } = &state.mode {
-        assert_eq!(nicks.len(), 1, "Whitespace-only nickname should be accepted");
+        assert_eq!(
+            nicks.len(),
+            1,
+            "Whitespace-only nickname should be accepted"
+        );
     }
 }
 
@@ -478,16 +745,23 @@ async fn test_whitespace_only_nickname() {
 async fn test_rapid_fire_commands() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
     // Rapid fire mixed commands
     for i in 0..20 {
         let action = match i % 5 {
-            0 => SongleaderAction::Tempo { nick: format!("user{i}") },
-            1 => SongleaderAction::Bingo { nick: format!("user{i}") },
+            0 => SongleaderAction::Tempo {
+                nick: format!("user{i}"),
+            },
+            1 => SongleaderAction::Bingo {
+                nick: format!("user{i}"),
+            },
             2 => SongleaderAction::Skål,
             3 => SongleaderAction::ListSongs,
             _ => SongleaderAction::Help,
@@ -499,7 +773,10 @@ async fn test_rapid_fire_commands() {
     let state = &songleader.read().await.state;
     // After enough valid tempo commands from different users, should transition
     assert!(
-        matches!(state.mode, Mode::Tempo { .. } | Mode::Bingo { .. } | Mode::Singing),
+        matches!(
+            state.mode,
+            Mode::Tempo { .. } | Mode::Bingo { .. } | Mode::Singing
+        ),
         "State should be valid after rapid commands"
     );
 }
@@ -509,26 +786,58 @@ async fn test_rapid_fire_commands() {
 async fn test_concurrent_song_operations() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
     // Add several songs
     for i in 0..5 {
-        let song = mock_songbook_song(&format!("song-{i}"), &format!("Song {i}"), Some(&format!("user{i}")));
-        send_action(&bus, &config, &songleader, SongleaderAction::RequestSong { song }).await;
+        let song = mock_songbook_song(
+            &format!("song-{i}"),
+            &format!("Song {i}"),
+            Some(&format!("user{i}")),
+        );
+        send_action(
+            &bus,
+            &config,
+            &songleader,
+            SongleaderAction::RequestSong { song },
+        )
+        .await;
     }
 
     // Remove some while maybe others are being added
-    send_action(&bus, &config, &songleader, SongleaderAction::RmSongByNick { nick: "user0".to_string() }).await;
-    send_action(&bus, &config, &songleader, SongleaderAction::RmSongById { id: "song-1".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::RmSongByNick {
+            nick: "user0".to_string(),
+        },
+    )
+    .await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::RmSongById {
+            id: "song-1".to_string(),
+        },
+    )
+    .await;
 
     // Should not panic
     let state = &songleader.read().await.state;
     // We started with 1 request + 1 backup, added 5, removed 2
     // But first request had same id might have been rejected
-    assert!(state.requests.len() <= 5, "Requests should be managed correctly");
+    assert!(
+        state.requests.len() <= 5,
+        "Requests should be managed correctly"
+    );
 }
 
 /// Test: Removing song that doesn't exist.
@@ -536,18 +845,40 @@ async fn test_concurrent_song_operations() {
 async fn test_remove_nonexistent_song() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
     // Try to remove songs that don't exist - should not panic
-    send_action(&bus, &config, &songleader, SongleaderAction::RmSongById { id: "nonexistent".to_string() }).await;
-    send_action(&bus, &config, &songleader, SongleaderAction::RmSongByNick { nick: "nonexistent_user".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::RmSongById {
+            id: "nonexistent".to_string(),
+        },
+    )
+    .await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::RmSongByNick {
+            nick: "nonexistent_user".to_string(),
+        },
+    )
+    .await;
 
     // Should still be in valid state
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Tempo { .. }), "Should remain in valid state");
+    assert!(
+        matches!(state.mode, Mode::Tempo { .. }),
+        "Should remain in valid state"
+    );
 }
 
 /// Test: Bingo mode with no songs falls back to Tempo.
@@ -567,14 +898,20 @@ async fn test_bingo_with_no_songs_fallback() {
     state.requests.clear();
     state.backup.clear();
 
-    let songleader = Arc::new(RwLock::new(Songleader::create_with_state(&bus, &config, state)));
+    let params = test_runtime_params();
+    let songleader = Arc::new(RwLock::new(Songleader::create_with_state(
+        &bus, &config, state, params,
+    )));
 
     // Force bingo - but there are no songs
     send_action(&bus, &config, &songleader, SongleaderAction::ForceBingo).await;
 
     let state = &songleader.read().await.state;
     // Should fall back to Tempo since no songs
-    assert!(matches!(state.mode, Mode::Tempo { .. }), "Should fall back to Tempo when no songs");
+    assert!(
+        matches!(state.mode, Mode::Tempo { .. }),
+        "Should fall back to Tempo when no songs"
+    );
 }
 
 /// Test: Multiple !skål commands after singing ends.
@@ -590,7 +927,10 @@ async fn test_multiple_skal_after_transition() {
     // Verify transition to Tempo (scope the read to release the lock)
     {
         let state = &songleader.read().await.state;
-        assert!(matches!(state.mode, Mode::Tempo { .. }), "First skål should transition to Tempo");
+        assert!(
+            matches!(state.mode, Mode::Tempo { .. }),
+            "First skål should transition to Tempo"
+        );
     }
 
     // Additional skål commands in Tempo mode should be ignored (not transition further)
@@ -598,7 +938,10 @@ async fn test_multiple_skal_after_transition() {
     send_action(&bus, &config, &songleader, SongleaderAction::Skål).await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Tempo { .. }), "Additional skål should be ignored in Tempo");
+    assert!(
+        matches!(state.mode, Mode::Tempo { .. }),
+        "Additional skål should be ignored in Tempo"
+    );
 }
 
 /// Test: Case sensitivity of nicknames.
@@ -606,15 +949,42 @@ async fn test_multiple_skal_after_transition() {
 async fn test_nickname_case_sensitivity() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
     // Same name, different cases - should be treated as different users
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "User".to_string() }).await;
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "user".to_string() }).await;
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "USER".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "User".to_string(),
+        },
+    )
+    .await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "user".to_string(),
+        },
+    )
+    .await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "USER".to_string(),
+        },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
     // All three should be counted as different (case sensitive)
@@ -651,14 +1021,33 @@ async fn test_list_songs_always_works() {
 async fn test_tempo_threshold_exactly_at_boundary() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
     // First two unique users
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "user1".to_string() }).await;
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "user2".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "user1".to_string(),
+        },
+    )
+    .await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "user2".to_string(),
+        },
+    )
+    .await;
 
     // Should still be in Tempo with 2 nicks
     {
@@ -671,10 +1060,21 @@ async fn test_tempo_threshold_exactly_at_boundary() {
     }
 
     // Third user triggers transition
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "user3".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "user3".to_string(),
+        },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
-    assert!(matches!(state.mode, Mode::Bingo { .. }), "Third tempo should trigger Bingo");
+    assert!(
+        matches!(state.mode, Mode::Bingo { .. }),
+        "Third tempo should trigger Bingo"
+    );
 }
 
 /// Test: Songs consumed during full party flow.
@@ -682,10 +1082,13 @@ async fn test_tempo_threshold_exactly_at_boundary() {
 async fn test_songs_consumed_during_flow() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
     // Get initial song count
     let initial_count = {
@@ -694,9 +1097,33 @@ async fn test_songs_consumed_during_flow() {
     };
 
     // Trigger tempo -> bingo transition
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "a".to_string() }).await;
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "b".to_string() }).await;
-    send_action(&bus, &config, &songleader, SongleaderAction::Tempo { nick: "c".to_string() }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "a".to_string(),
+        },
+    )
+    .await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "b".to_string(),
+        },
+    )
+    .await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::Tempo {
+            nick: "c".to_string(),
+        },
+    )
+    .await;
 
     // After entering bingo, a song should be popped
     let after_bingo_count = {
@@ -716,10 +1143,13 @@ async fn test_songs_consumed_during_flow() {
 async fn test_special_chars_in_song_id() {
     let bus = EventBus::new();
     let config = test_config();
-    let songleader = create_test_songleader(&bus, Mode::Tempo {
-        nicks: HashSet::new(),
-        init_t: Instant::now(),
-    });
+    let songleader = create_test_songleader(
+        &bus,
+        Mode::Tempo {
+            nicks: HashSet::new(),
+            init_t: Instant::now(),
+        },
+    );
 
     let song = SongbookSong {
         id: "song-with-special-chars-äöå-&-<>-\"'".to_string(),
@@ -729,10 +1159,19 @@ async fn test_special_chars_in_song_id() {
         queued_by: Some("user<script>".to_string()),
     };
 
-    send_action(&bus, &config, &songleader, SongleaderAction::RequestSong { song }).await;
+    send_action(
+        &bus,
+        &config,
+        &songleader,
+        SongleaderAction::RequestSong { song },
+    )
+    .await;
 
     let state = &songleader.read().await.state;
     // Should not panic, song should be added (or rejected for duplicate)
     // The important thing is no crash
-    assert!(state.requests.len() >= 1, "Should handle special characters");
+    assert!(
+        state.requests.len() >= 1,
+        "Should handle special characters"
+    );
 }

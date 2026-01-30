@@ -1,4 +1,4 @@
-//! Discord integration for the sitzning bot.
+//! Discord integration for the sitz bot.
 //!
 //! This module provides Discord support including:
 //! - Message mirroring between Discord and IRC
@@ -350,13 +350,15 @@ async fn event_handler(
             // Check if this is a reaction to the bingo message
             if let Some(bingo_msg_id) = state.bingo_message_id {
                 if add_reaction.message_id == bingo_msg_id {
-                    // Get the user who reacted
+                    // Get the user who reacted (ignore bot reactions)
                     if let Some(user) = &add_reaction.member {
-                        let nick = user.nick.clone().unwrap_or_else(|| user.user.name.clone());
-                        info!("Discord bingo reaction from {nick}");
-                        state
-                            .bus
-                            .send(Event::Songleader(SongleaderAction::Bingo { nick }));
+                        if !user.user.bot {
+                            let nick = user.nick.clone().unwrap_or_else(|| user.user.name.clone());
+                            info!("Discord bingo reaction from {nick}");
+                            state
+                                .bus
+                                .send(Event::Songleader(SongleaderAction::Bingo { nick }));
+                        }
                     }
                 }
             }
@@ -882,10 +884,28 @@ fn start_outgoing_message_handler(bus: EventBus, state: Arc<RwLock<BotState>>) {
                                     .send_message(&http, CreateMessage::new().embed(embed))
                                     .await;
 
-                                // Store the message ID for reaction tracking
+                                // Store the message ID for reaction tracking and add bingo reaction
                                 if let Ok(msg) = &msg_result {
                                     let mut state_write = state.write().await;
                                     state_write.bingo_message_id = Some(msg.id);
+                                    drop(state_write);
+
+                                    // Add bingo reaction for users to click
+                                    let http = http.clone();
+                                    let msg_id = msg.id;
+                                    let channel = channel_id;
+                                    tokio::spawn(async move {
+                                        if let Err(e) = channel
+                                            .create_reaction(
+                                                &http,
+                                                msg_id,
+                                                ReactionType::Unicode("🎯".to_string()),
+                                            )
+                                            .await
+                                        {
+                                            debug!("Failed to add bingo reaction: {:?}", e);
+                                        }
+                                    });
                                 }
 
                                 msg_result
@@ -1372,6 +1392,7 @@ async fn song_admin(_ctx: Context<'_>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Start the party - plays intro and welcome messages
 #[poise::command(slash_command, rename = "begin")]
 async fn song_begin(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
@@ -1380,6 +1401,7 @@ async fn song_begin(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// End the party - plays goodbye routine
 #[poise::command(slash_command, rename = "end")]
 async fn song_end(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
@@ -1388,6 +1410,7 @@ async fn song_end(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Pause the songleader - stops song selection flow
 #[poise::command(slash_command, rename = "pause")]
 async fn song_pause(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
@@ -1396,6 +1419,7 @@ async fn song_pause(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Force tempo mode - skip waiting and let users vote for next song
 #[poise::command(slash_command, rename = "force-tempo")]
 async fn song_force_tempo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
@@ -1406,6 +1430,7 @@ async fn song_force_tempo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Force bingo mode - skip tempo and announce next song to find and sing
 #[poise::command(slash_command, rename = "force-bingo")]
 async fn song_force_bingo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
@@ -1416,6 +1441,7 @@ async fn song_force_bingo(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Force singing mode - skip bingo and start the countdown for singing
 #[poise::command(slash_command, rename = "force-singing")]
 async fn song_force_singing(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
@@ -1481,6 +1507,7 @@ async fn autocomplete_song_users<'a>(
         .collect()
 }
 
+/// Remove a user's last music queue entry
 #[poise::command(slash_command, rename = "remove-music")]
 async fn song_remove_music(
     ctx: Context<'_>,
@@ -1499,6 +1526,7 @@ async fn song_remove_music(
     Ok(())
 }
 
+/// Remove a user's last song request
 #[poise::command(slash_command, rename = "remove-song")]
 async fn song_remove_song(
     ctx: Context<'_>,
@@ -1527,6 +1555,7 @@ async fn music_admin(_ctx: Context<'_>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Skip to the next song in the music queue
 #[poise::command(slash_command, rename = "next")]
 async fn music_next(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
@@ -1535,6 +1564,7 @@ async fn music_next(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Go back to the previous song
 #[poise::command(slash_command, rename = "prev")]
 async fn music_prev(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
@@ -1543,6 +1573,7 @@ async fn music_prev(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Pause music playback
 #[poise::command(slash_command, rename = "pause")]
 async fn music_pause(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
@@ -1551,6 +1582,7 @@ async fn music_pause(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Resume music playback
 #[poise::command(slash_command, rename = "resume")]
 async fn music_resume(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
@@ -1569,6 +1601,7 @@ async fn params_admin(_ctx: Context<'_>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Show current runtime parameters
 #[poise::command(slash_command, rename = "show")]
 async fn params_show(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let state = ctx.data().read().await;
@@ -1600,6 +1633,7 @@ async fn params_show(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Change runtime parameters (volumes, vote thresholds)
 #[poise::command(slash_command, rename = "set")]
 async fn params_set(
     ctx: Context<'_>,
@@ -1661,6 +1695,7 @@ async fn voice_admin(_ctx: Context<'_>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Join a voice channel
 #[poise::command(slash_command, rename = "join")]
 async fn voice_join(
     ctx: Context<'_>,
@@ -1722,6 +1757,7 @@ async fn voice_join(
     Ok(())
 }
 
+/// Leave the current voice channel
 #[poise::command(slash_command, rename = "leave")]
 async fn voice_leave(ctx: Context<'_>) -> Result<(), anyhow::Error> {
     let guild_id = ctx
@@ -2075,7 +2111,7 @@ pub fn create_help_embed(songbook_url: &str) -> CreateEmbed {
     CreateEmbed::new()
         .title("ℹ️ Bot Commands")
         .color(0x5865f2)
-        .description("Welcome to the sitzning bot! Here are the available commands:")
+        .description("Welcome to the sitz bot! Here are the available commands:")
         .field(
             "🎵 Music",
             "`/play https://youtu.be/dQw4w9WgXcQ` - Queue a YouTube video\n\
@@ -2105,10 +2141,7 @@ pub fn create_help_embed(songbook_url: &str) -> CreateEmbed {
             "You can also react to bingo announcements instead of typing `/bingo`!",
             false,
         )
-        .footer(serenity::CreateEmbedFooter::new(format!(
-            "Songbook: {}",
-            songbook_url
-        )))
+        .field("📚 Songbook", songbook_url, false)
 }
 
 /// Create a countdown embed

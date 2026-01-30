@@ -171,8 +171,9 @@ pub async fn search_yt(query: &str, max_results: usize) -> Result<Vec<(String, S
 
             // Truncate title if too long for Discord's 100 char limit (accounting for duration)
             let max_title_len = 90 - duration_str.len();
-            let display_title = if title.len() > max_title_len {
-                format!("{}...", &title[..max_title_len - 3])
+            let display_title = if title.chars().count() > max_title_len && max_title_len > 3 {
+                let truncated: String = title.chars().take(max_title_len - 3).collect();
+                format!("{truncated}...")
             } else {
                 title
             };

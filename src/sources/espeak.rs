@@ -24,7 +24,10 @@ pub enum Priority {
 
 #[derive(Clone, Debug)]
 pub enum TextToSpeechAction {
-    Speak { text: String, prio: Priority },
+    Speak {
+        text: String,
+        prio: Priority,
+    },
     #[allow(dead_code)]
     AllowLowPrio,
     #[allow(dead_code)]
@@ -211,7 +214,10 @@ mod espeakng_sys_example {
             espeak_SetSynthCallback(Some(synth_callback))
         }
 
-        let text_cstr = CString::new(text).expect("Failed to convert &str to CString");
+        // Filter out null bytes to prevent CString::new from panicking
+        let filtered_text: String = text.chars().filter(|&c| c != '\0').collect();
+        let text_cstr =
+            CString::new(filtered_text).expect("Filtered text should not contain nulls");
 
         let position = 0u32;
         let position_type: espeak_POSITION_TYPE = 0;
