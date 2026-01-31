@@ -29,7 +29,7 @@ async fn test_event_bus_basics() {
 /// Test SongleaderState add_request functionality.
 #[tokio::test]
 async fn test_songleader_state_add_request() {
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
 
     let song1 = mock_songbook_song("song-1", "Test Song 1", Some("user1"));
     let song2 = mock_songbook_song("song-2", "Test Song 2", Some("user2"));
@@ -52,7 +52,7 @@ async fn test_songleader_state_add_request() {
 /// Test that adding a song already in backup moves it to requests.
 #[tokio::test]
 async fn test_request_moves_from_backup() {
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
 
     let backup_song = mock_songbook_song("backup-song", "Backup Song", None);
     state.backup.push(backup_song.clone());
@@ -75,7 +75,7 @@ async fn test_request_moves_from_backup() {
 /// Test rm_song_by_nick removes the most recently added song by that user.
 #[tokio::test]
 async fn test_rm_song_by_nick_removes_most_recent() {
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
 
     let song1 = mock_songbook_song("song-1", "First Song", Some("user1"));
     let song2 = mock_songbook_song("song-2", "Second Song", Some("user1"));
@@ -101,7 +101,7 @@ async fn test_rm_song_by_nick_removes_most_recent() {
 /// Test rm_song_by_id removes the correct song.
 #[tokio::test]
 async fn test_rm_song_by_id() {
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
 
     let song1 = mock_songbook_song("song-1", "First Song", Some("user1"));
     let song2 = mock_songbook_song("song-2", "Second Song", Some("user2"));
@@ -118,7 +118,7 @@ async fn test_rm_song_by_id() {
 /// Test pop_next_song priority: first_songs > requests > backup.
 #[tokio::test]
 async fn test_pop_next_song_priority() {
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
 
     // Add songs to each queue
     let first_song = mock_songbook_song("first", "First Song", None);
@@ -148,14 +148,14 @@ async fn test_pop_next_song_priority() {
 /// Test Mode enum serialization (for state persistence).
 #[tokio::test]
 async fn test_mode_default_is_inactive() {
-    let state = SongleaderState::default();
+    let state = SongleaderState::new_without_persistence();
     assert_eq!(state.mode, Mode::Inactive);
 }
 
 /// Test that get_songs returns all songs in order.
 #[tokio::test]
 async fn test_get_songs_returns_all() {
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
 
     let first = mock_songbook_song("first", "First", None);
     let request = mock_songbook_song("request", "Request", Some("user"));

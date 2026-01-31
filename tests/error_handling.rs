@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 /// Test SongleaderState gracefully handles empty queues for pop_next_song.
 #[tokio::test]
 async fn test_pop_from_empty_queues() {
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
 
     // All queues empty
     assert!(state.first_songs.is_empty());
@@ -25,7 +25,7 @@ async fn test_pop_from_empty_queues() {
 /// Test removing non-existent song by nick.
 #[tokio::test]
 async fn test_remove_nonexistent_song_by_nick() {
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
 
     state
         .requests
@@ -153,7 +153,7 @@ async fn test_songbook_song_display_complete() {
 /// Test adding request with same ID is handled (deduplication).
 #[tokio::test]
 async fn test_duplicate_song_request() {
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
 
     let song1 = mock_songbook_song("song-1", "Song 1", Some("user1"));
     let song2 = mock_songbook_song("song-1", "Song 1 Duplicate", Some("user2")); // Same ID
@@ -324,7 +324,7 @@ async fn test_songleader_action_variants() {
 /// Test first_songs queue behavior - pops from first_songs first.
 #[tokio::test]
 async fn test_first_songs_priority() {
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
 
     // Add to first_songs (VecDeque) and requests (Vec)
     state.first_songs = VecDeque::from(vec![mock_songbook_song("first", "First", None)]);

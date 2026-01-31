@@ -16,7 +16,7 @@ use tokio::time::Instant;
 fn create_test_songleader(bus: &EventBus, mode: Mode) -> Arc<RwLock<Songleader>> {
     let config = test_config();
     let params = test_runtime_params();
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
     state.mode = mode;
 
     // Add some songs so bingo mode can work
@@ -888,7 +888,7 @@ async fn test_bingo_with_no_songs_fallback() {
     let config = test_config();
 
     // Create songleader with empty queues
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
     state.mode = Mode::Tempo {
         nicks: HashSet::new(),
         init_t: Instant::now(),

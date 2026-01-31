@@ -10,7 +10,7 @@ use std::collections::{HashSet, VecDeque};
 /// Test SongleaderState serialization to JSON.
 #[tokio::test]
 async fn test_songleader_state_serialization() {
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
 
     let song1 = mock_songbook_song("song-1", "First Song", Some("user1"));
     let song2 = mock_songbook_song("song-2", "Second Song", Some("user2"));
@@ -224,7 +224,7 @@ async fn test_song_serialization() {
 /// Test complete state round-trip with multiple songs.
 #[tokio::test]
 async fn test_full_state_round_trip() {
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
 
     // Add songs to first_songs queue
     state.first_songs = VecDeque::from(vec![
@@ -314,7 +314,7 @@ async fn test_atomic_write_pattern() {
     let state_path = temp_dir.path().join("songleader_state.json");
     let temp_path = temp_dir.path().join("songleader_state.json.tmp");
 
-    let state = SongleaderState::default();
+    let state = SongleaderState::new_without_persistence();
     let json = serde_json::to_string_pretty(&state).unwrap();
 
     // Step 1: Write to temp file
@@ -347,7 +347,7 @@ async fn test_corrupted_state_fallback() {
     assert!(result.is_err());
 
     // Application would fall back to default
-    let fallback = SongleaderState::default();
+    let fallback = SongleaderState::new_without_persistence();
     assert!(fallback.requests.is_empty());
     assert_eq!(fallback.mode, Mode::Inactive);
 }
@@ -355,7 +355,7 @@ async fn test_corrupted_state_fallback() {
 /// Test getters return consistent data.
 #[tokio::test]
 async fn test_get_songs_consistency() {
-    let mut state = SongleaderState::default();
+    let mut state = SongleaderState::new_without_persistence();
 
     state.first_songs = VecDeque::from(vec![mock_songbook_song("f1", "F1", None)]);
     state.requests = vec![mock_songbook_song("r1", "R1", Some("u"))];

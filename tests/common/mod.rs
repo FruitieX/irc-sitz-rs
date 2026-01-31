@@ -39,9 +39,11 @@ pub fn test_config() -> Config {
     }
 }
 
-/// Creates default runtime parameters for testing.
+/// Creates default runtime parameters for testing (without persistence).
 pub fn test_runtime_params() -> SharedRuntimeParams {
-    std::sync::Arc::new(tokio::sync::RwLock::new(RuntimeParams::default()))
+    std::sync::Arc::new(tokio::sync::RwLock::new(
+        RuntimeParams::new_without_persistence(),
+    ))
 }
 
 /// Creates a mock Song for testing.

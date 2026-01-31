@@ -8,7 +8,6 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 
 const PLAYBACK_STATE_FILE: &str = "playback_state.json";
-const PLAYBACK_STATE_FILE_TMP: &str = "playback_state.json.tmp";
 pub const MAX_SONG_DURATION: Duration = Duration::from_secs(10 * 60);
 
 /// Vote information for a song
@@ -111,6 +110,10 @@ pub struct PlaybackState {
 
     /// Progress of the current song in seconds
     pub playback_progress: u64,
+
+    /// Path to persist state to (None disables persistence, used for testing)
+    #[serde(skip)]
+    persist_path: Option<std::path::PathBuf>,
 }
 
 impl Default for PlaybackState {
@@ -123,6 +126,7 @@ impl Default for PlaybackState {
             is_playing: false,
             should_play: true,
             playback_progress: 0,
+            persist_path: Some(std::path::PathBuf::from(PLAYBACK_STATE_FILE)),
         }
     }
 }
@@ -132,7 +136,11 @@ impl PlaybackState {
         let res = tokio::fs::read(PLAYBACK_STATE_FILE).await;
 
         match res {
-            Ok(res) => serde_json::from_slice(&res).unwrap_or_default(),
+            Ok(res) => {
+                let mut state: PlaybackState = serde_json::from_slice(&res).unwrap_or_default();
+                state.persist_path = Some(std::path::PathBuf::from(PLAYBACK_STATE_FILE));
+                state
+            }
             Err(e) => {
                 info!("Error while reading playback state: {:?}", e);
                 info!("Falling back to default state.");
@@ -143,7 +151,12 @@ impl PlaybackState {
 
     /// Persists state to disk using atomic write (write to temp file, then rename).
     /// This prevents corruption if the process crashes during write.
+    /// Persistence is skipped if persist_path is None (used for testing).
     fn persist(&self) {
+        let Some(ref path) = self.persist_path else {
+            return;
+        };
+
         let json = match serde_json::to_string_pretty(&self) {
             Ok(json) => json,
             Err(e) => {
@@ -152,17 +165,20 @@ impl PlaybackState {
             }
         };
 
+        let path = path.clone();
+        let tmp_path = path.with_extension("json.tmp");
+
         // Spawn a task to perform the atomic write
         tokio::spawn(async move {
             // Write to temp file first
-            if let Err(e) = tokio::fs::write(PLAYBACK_STATE_FILE_TMP, &json).await {
+            if let Err(e) = tokio::fs::write(&tmp_path, &json).await {
                 error!("Error while writing playback state to temp file: {:?}", e);
                 return;
             }
 
             // Atomically rename temp file to actual file
             // This ensures we never have a partially written state file
-            if let Err(e) = tokio::fs::rename(PLAYBACK_STATE_FILE_TMP, PLAYBACK_STATE_FILE).await {
+            if let Err(e) = tokio::fs::rename(&tmp_path, &path).await {
                 // NotFound is expected on first run when no state exists yet
                 if e.kind() != std::io::ErrorKind::NotFound {
                     error!("Error while renaming playback state file: {:?}", e);

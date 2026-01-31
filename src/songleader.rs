@@ -20,7 +20,6 @@ use tokio::{
 };
 
 const SONGLEADER_STATE_FILE: &str = "songleader_state.json";
-const SONGLEADER_STATE_FILE_TMP: &str = "songleader_state.json.tmp";
 /// Default number of votes required to advance from tempo to bingo
 pub const NUM_TEMPO_NICKS: usize = 3;
 /// Default number of votes required to start singing
@@ -137,7 +136,7 @@ pub enum Mode {
     Singing,
 }
 
-#[derive(Default, Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SongleaderState {
     /// List of songs that the songleader will sing first
     pub first_songs: VecDeque<SongbookSong>,
@@ -150,6 +149,22 @@ pub struct SongleaderState {
 
     /// Current mode of the songleader
     pub mode: Mode,
+
+    /// Path to persist state to (None disables persistence, used for testing)
+    #[serde(skip)]
+    persist_path: Option<std::path::PathBuf>,
+}
+
+impl Default for SongleaderState {
+    fn default() -> Self {
+        Self {
+            first_songs: VecDeque::new(),
+            requests: Vec::new(),
+            backup: Vec::new(),
+            mode: Mode::default(),
+            persist_path: Some(std::path::PathBuf::from(SONGLEADER_STATE_FILE)),
+        }
+    }
 }
 
 impl SongleaderState {
@@ -157,7 +172,11 @@ impl SongleaderState {
         let res = tokio::fs::read(SONGLEADER_STATE_FILE).await;
 
         match res {
-            Ok(res) => serde_json::from_slice(&res).unwrap_or_default(),
+            Ok(res) => {
+                let mut state: SongleaderState = serde_json::from_slice(&res).unwrap_or_default();
+                state.persist_path = Some(std::path::PathBuf::from(SONGLEADER_STATE_FILE));
+                state
+            }
             Err(e) => {
                 info!("Error while reading songleader state: {:?}", e);
                 info!("Falling back to default state.");
@@ -166,9 +185,25 @@ impl SongleaderState {
         }
     }
 
+    /// Creates a state with persistence disabled (for testing)
+    pub fn new_without_persistence() -> Self {
+        Self {
+            first_songs: VecDeque::new(),
+            requests: Vec::new(),
+            backup: Vec::new(),
+            mode: Mode::default(),
+            persist_path: None,
+        }
+    }
+
     /// Persists state to disk using atomic write (write to temp file, then rename).
     /// This prevents corruption if the process crashes during write.
+    /// Persistence is skipped if persist_path is None (used for testing).
     fn persist(&self) {
+        let Some(ref path) = self.persist_path else {
+            return;
+        };
+
         let json = match serde_json::to_string_pretty(self) {
             Ok(json) => json,
             Err(e) => {
@@ -177,19 +212,20 @@ impl SongleaderState {
             }
         };
 
+        let path = path.clone();
+        let tmp_path = path.with_extension("json.tmp");
+
         // Spawn a task to perform the atomic write
         tokio::spawn(async move {
             // Write to temp file first
-            if let Err(e) = tokio::fs::write(SONGLEADER_STATE_FILE_TMP, &json).await {
+            if let Err(e) = tokio::fs::write(&tmp_path, &json).await {
                 error!("Error while writing songleader state to temp file: {:?}", e);
                 return;
             }
 
             // Atomically rename temp file to actual file
             // This ensures we never have a partially written state file
-            if let Err(e) =
-                tokio::fs::rename(SONGLEADER_STATE_FILE_TMP, SONGLEADER_STATE_FILE).await
-            {
+            if let Err(e) = tokio::fs::rename(&tmp_path, &path).await {
                 error!("Error while renaming songleader state file: {:?}", e);
             }
         });

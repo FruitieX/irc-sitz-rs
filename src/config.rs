@@ -6,7 +6,6 @@ use tokio::fs::read_to_string;
 use tokio::sync::RwLock;
 
 const PARAMS_STATE_FILE: &str = "params_state.json";
-const PARAMS_STATE_FILE_TMP: &str = "params_state.json.tmp";
 
 /// Runtime-adjustable parameters (can be modified via admin commands)
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -23,6 +22,9 @@ pub struct RuntimeParams {
     pub num_tempo_nicks: usize,
     /// Number of bingo votes to start singing
     pub num_bingo_nicks: usize,
+    /// Path to persist state to (None disables persistence, used for testing)
+    #[serde(skip)]
+    persist_path: Option<std::path::PathBuf>,
 }
 
 impl Default for RuntimeParams {
@@ -34,6 +36,7 @@ impl Default for RuntimeParams {
             skip_votes_required: 3,
             num_tempo_nicks: 3,
             num_bingo_nicks: 3,
+            persist_path: Some(std::path::PathBuf::from(PARAMS_STATE_FILE)),
         }
     }
 }
@@ -41,7 +44,11 @@ impl Default for RuntimeParams {
 impl RuntimeParams {
     async fn read_or_default() -> Self {
         match tokio::fs::read(PARAMS_STATE_FILE).await {
-            Ok(data) => serde_json::from_slice(&data).unwrap_or_default(),
+            Ok(data) => {
+                let mut params: RuntimeParams = serde_json::from_slice(&data).unwrap_or_default();
+                params.persist_path = Some(std::path::PathBuf::from(PARAMS_STATE_FILE));
+                params
+            }
             Err(e) => {
                 info!("Error while reading params state: {:?}", e);
                 info!("Falling back to default params.");
@@ -50,8 +57,26 @@ impl RuntimeParams {
         }
     }
 
+    /// Creates params with persistence disabled (for testing)
+    pub fn new_without_persistence() -> Self {
+        Self {
+            music_volume: 0.75,
+            music_volume_ducked: 0.2,
+            tts_volume: 1.25,
+            skip_votes_required: 3,
+            num_tempo_nicks: 3,
+            num_bingo_nicks: 3,
+            persist_path: None,
+        }
+    }
+
     /// Persists params to disk using atomic write (write to temp file, then rename).
+    /// Persistence is skipped if persist_path is None (used for testing).
     pub fn persist(&self) {
+        let Some(ref path) = self.persist_path else {
+            return;
+        };
+
         let json = match serde_json::to_string_pretty(self) {
             Ok(json) => json,
             Err(e) => {
@@ -60,13 +85,16 @@ impl RuntimeParams {
             }
         };
 
+        let path = path.clone();
+        let tmp_path = path.with_extension("json.tmp");
+
         tokio::spawn(async move {
-            if let Err(e) = tokio::fs::write(PARAMS_STATE_FILE_TMP, &json).await {
+            if let Err(e) = tokio::fs::write(&tmp_path, &json).await {
                 error!("Error while writing params state to temp file: {:?}", e);
                 return;
             }
 
-            if let Err(e) = tokio::fs::rename(PARAMS_STATE_FILE_TMP, PARAMS_STATE_FILE).await {
+            if let Err(e) = tokio::fs::rename(&tmp_path, &path).await {
                 error!("Error while renaming params state file: {:?}", e);
             }
         });
