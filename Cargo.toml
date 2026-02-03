@@ -11,53 +11,53 @@ irc = ["dep:irc"]
 discord = ["serenity", "poise", "songbird"]
 
 [dependencies]
-anyhow = "1.0"
-async-trait = "0.1"
-byteorder = "1.5"
+anyhow = "=1.0.100"
+async-trait = "=0.1.89"
+byteorder = "=1.5.0"
 bytes = "1.11"
-espeakng-sys = { version = "0.3", features = ["clang-runtime"] }
-futures = "0.3"
-hound = "3.5"
-irc = { version = "1.1", default-features = false, features = [
+espeakng-sys = { version = "=0.3.0", features = ["clang-runtime"] }
+futures = "=0.3.31"
+hound = "=3.5.1"
+irc = { version = "=1.1.0", default-features = false, features = [
 	"serde",
 	"tls-rust",
 	"toml",
 	"toml_config",
 ], optional = true }
-itertools = "0.14"
-lazy_static = "1.5"
-log = "0.4"
-pretty_env_logger = "0.5"
-rand = "0.9"
-rubato = "0.16"
-regex = "1.12"
-reqwest = { version = "0.13", default-features = false, features = [
+itertools = "=0.14.0"
+lazy_static = "=1.5.0"
+log = "=0.4.29"
+pretty_env_logger = "=0.5.0"
+rand = "=0.9.2"
+rubato = "=0.16.2"
+regex = "=1.12.2"
+reqwest = { version = "=0.13.1", default-features = false, features = [
 	"rustls",
 ] }
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
-scraper = "0.25"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-serde_regex = "1.1"
-symphonia = { version = "0.5", features = ["all-formats", "all-codecs"] }
-tokio = { version = "1.49", features = ["full"] }
-tokio-util = { version = "0.7", features = ["io", "io-util"] }
-toml = "0.9"
-youtube_dl = { version = "0.10", features = [
+rustls = { version = "=0.23.36", default-features = false, features = ["ring"] }
+scraper = "=0.25.0"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.149"
+serde_regex = "=1.1.0"
+symphonia = { version = "=0.5.5", features = ["all-formats", "all-codecs"] }
+tokio = { version = "=1.49.0", features = ["full"] }
+tokio-util = { version = "=0.7.18", features = ["io", "io-util"] }
+toml = "=0.9.11+spec-1.1.0"
+youtube_dl = { version = "=0.10.0", features = [
 	"downloader-rustls-tls",
 	"tokio",
 ] }
 
 # Discord support (optional)
-serenity = { version = "0.12", default-features = false, features = [
+serenity = { version = "=0.12.5", default-features = false, features = [
 	"client",
 	"gateway",
 	"model",
 	"rustls_backend",
 	"cache",
 ], optional = true }
-poise = { version = "0.6", optional = true }
-songbird = { version = "0.5", default-features = false, features = [
+poise = { version = "=0.6.1", optional = true }
+songbird = { version = "=0.5.0", default-features = false, features = [
 	"serenity",
 	"rustls",
 	"driver",
@@ -66,6 +66,6 @@ songbird = { version = "0.5", default-features = false, features = [
 ], optional = true }
 
 [dev-dependencies]
-tempfile = "3"
-tokio-test = "0.4"
-wiremock = "0.6"
+tempfile = "=3.24.0"
+tokio-test = "=0.4.5"
+wiremock = "=0.6.5"
